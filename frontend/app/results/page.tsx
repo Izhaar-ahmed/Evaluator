@@ -64,20 +64,6 @@ export default function ResultsPage() {
     }
   }, [])
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'excellent':
-        return 'from-green-500/10 border-green-500/30'
-      case 'good':
-        return 'from-cyan-500/10 border-cyan-500/30'
-      case 'fair':
-        return 'from-amber-500/10 border-amber-500/30'
-      case 'needs-improvement':
-        return 'from-red-500/10 border-red-500/30'
-      default:
-        return 'from-indigo-500/10 border-indigo-500/30'
-    }
-  }
 
   const getStatusBadgeColor = (status: string) => {
     switch (status) {
