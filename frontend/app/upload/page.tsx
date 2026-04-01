@@ -16,19 +16,15 @@ export default function UploadPage() {
 
   const handleFileUploadSubmit = async (data: FileUploadData) => {
     setLoading(true)
-    setMessage('Submitting evaluation request...')
+    setMessage('Establishing secure link to evaluation engine...')
     setMessageType('info')
 
     try {
-      // Create FormData for multipart request
       const formData = new FormData()
-
-      // Add files
       data.files.forEach((file) => {
         formData.append('files', file)
       })
 
-      // Use the user-selected assignment type
       formData.append('assignment_type', data.assignmentType)
 
       if (data.problemStatement) {
@@ -39,11 +35,6 @@ export default function UploadPage() {
         formData.append('rubric_content', data.rubric)
       }
 
-      // Log for debugging
-      console.log('Submitting assignment_type:', data.assignmentType);
-      console.log('Files:', data.files.map(f => f.name));
-
-      // Call backend API
       const res = await fetch(`${API_BASE_URL}/api/evaluate`, {
         method: 'POST',
         body: formData,
@@ -52,133 +43,105 @@ export default function UploadPage() {
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}))
         throw new Error(
-          errorData.detail || `API error: ${res.status} ${res.statusText}`
+          errorData.detail || `Network error: ${res.status}`
         )
       }
 
       const result: EvaluationResponse = await res.json()
 
       if (result.status === 'success') {
-        // Store results for results page
         ResultsStore.setResults(result)
-
-        setMessage(
-          `✓ ${result.message} - Evaluated ${result.summary?.total_submissions || 0} submissions`
-        )
+        setMessage(`SUCCESS: Synchronized ${result.summary?.total_submissions || 0} evaluations.`)
         setMessageType('success')
-
-        // Redirect to results after 1 second
         setTimeout(() => {
           router.push('/results')
-        }, 1000)
+        }, 800)
       } else {
-        setMessage(`✗ Evaluation failed: ${result.message}`)
+        setMessage(`CRIT: Evaluation protocol failure.`)
         setMessageType('error')
       }
     } catch (error) {
-      const errorMsg =
-        error instanceof Error ? error.message : 'Unknown error occurred'
-      setMessage(
-        `✗ Error: ${errorMsg}. Make sure the backend is running on ${API_BASE_URL}`
-      )
+      setMessage(`ERROR: System offline or malformed payload.`)
       setMessageType('error')
-      console.error('API Error:', error)
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/40 via-slate-950 to-slate-950 relative overflow-hidden">
-
-      {/* Background decoration */}
-      <div className="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-indigo-500/10 to-transparent pointer-events-none" />
-      <div className="absolute top-[-10%] right-[-5%] w-96 h-96 bg-purple-500/20 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-[20%] left-[-10%] w-72 h-72 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+    <main className="min-h-screen bg-obsidian bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/10 via-obsidian to-obsidian relative overflow-hidden">
+      
+      {/* Dynamic Background Accents */}
+      <div className="absolute top-0 left-0 w-full h-screen pointer-events-none overflow-hidden z-0">
+        <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-indigo-500/10 rounded-full blur-[120px] animate-pulse" />
+        <div className="absolute bottom-[-10%] right-[-5%] w-[40%] h-[40%] bg-purple-600/5 rounded-full blur-[100px]" />
+      </div>
 
       {/* Navigation */}
-      <nav className="border-b border-indigo-500/10 backdrop-blur-md sticky top-0 z-50 bg-slate-950/50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-          <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg group-hover:shadow-indigo-500/25 transition-all">
-              <span className="text-white font-bold text-lg">A</span>
+      <nav className="glass-edge backdrop-blur-3xl sticky top-0 z-50 bg-obsidian/40 border-b border-white/5">
+        <div className="max-w-7xl mx-auto px-8 py-5 flex justify-between items-center">
+          <Link href="/" className="flex items-center gap-3 group">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center shadow-[0_0_20px_rgba(99,102,241,0.3)] group-hover:scale-105 transition-all">
+              <span className="text-white font-black text-xl italic tracking-tighter">E</span>
             </div>
-            <span className="text-xl font-bold text-slate-200 group-hover:text-white transition-colors">
-              Assignment Evaluator
+            <span className="text-xl font-bold text-white/90 group-hover:text-white transition-colors uppercase tracking-[0.1em] font-space-grotesk">
+              Evaluator 2.0
             </span>
           </Link>
-          <div className="flex items-center gap-6">
-            <Link href="/upload" className="text-indigo-400 font-medium border-b-2 border-indigo-400 pb-0.5">
+          <div className="flex items-center gap-10">
+            <Link href="/upload" className="text-indigo-400 font-black text-xs uppercase tracking-[0.2em] relative after:absolute after:bottom-[-4px] after:left-0 after:w-full after:h-0.5 after:bg-indigo-400 after:rounded-full">
               Upload
             </Link>
-            <Link href="/results" className="text-slate-400 hover:text-white transition-colors font-medium">
+            <Link href="/results" className="text-white/40 hover:text-white/80 transition-all font-black text-xs uppercase tracking-[0.2em]">
               Results
             </Link>
           </div>
         </div>
       </nav>
 
-      <div className="max-w-7xl mx-auto px-6 py-12 relative z-10">
-        <div className="mb-12 text-center max-w-2xl mx-auto">
-          <h1 className="text-4xl md:text-5xl font-black text-white mb-6 tracking-tight">
-            Upload & <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">Evaluate</span>
+      <div className="max-w-7xl mx-auto px-8 py-20 relative z-10 font-inter">
+        <div className="mb-20 text-center max-w-3xl mx-auto space-y-6">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-indigo-500/5 border border-indigo-500/10 mb-2">
+            <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300/80 font-space-grotesk">Evaluation Interface V2.0</span>
+          </div>
+          <h1 className="text-6xl md:text-7xl font-black text-white leading-[1.1] tracking-tighter">
+            Submit Your <span className="text-indigo-400 drop-shadow-[0_0_15px_rgba(129,140,248,0.3)]">Submissions</span>
           </h1>
-          <p className="text-lg text-slate-400 leading-relaxed">
-            Submit your student files and let our AI-powered system provide instant, detailed feedback and grading based on your criteria.
+          <p className="text-lg text-slate-400 leading-relaxed font-medium">
+            AI-powered semantic evaluation. Upload student payloads and establish rubric parameters 
+            to begin deep-reasoning multi-agent critique.
           </p>
         </div>
 
         {/* Message Banner */}
         {message && (
-          <div className={`max-w-5xl mx-auto mb-8 p-4 rounded-xl border backdrop-blur-md flex items-center gap-3 animate-slide-up ${messageType === 'success'
-            ? 'bg-green-500/10 border-green-500/50 text-green-300'
+          <div className={`max-w-4xl mx-auto mb-12 p-6 rounded-3xl border backdrop-blur-2xl flex items-center justify-between gap-4 animate-slide-up shadow-2xl ${messageType === 'success'
+            ? 'bg-emerald-trust/5 border-emerald-trust/20 text-emerald-trust'
             : messageType === 'error'
-              ? 'bg-red-500/10 border-red-500/50 text-red-300'
-              : 'bg-indigo-500/10 border-indigo-500/50 text-indigo-300'
+              ? 'bg-red-500/5 border-red-500/20 text-red-300'
+              : 'bg-indigo-500/5 border-indigo-500/20 text-indigo-300'
             }`}>
-            <span className="text-2xl">
-              {messageType === 'success' ? '✅' : messageType === 'error' ? '🚫' : 'ℹ️'}
-            </span>
-            <p className="font-medium">{message}</p>
+            <div className="flex items-center gap-4">
+               <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-lg ${messageType === 'success' ? 'bg-emerald-trust/10' : messageType === 'error' ? 'bg-red-500/10' : 'bg-indigo-500/10'}`}>
+                {messageType === 'success' ? '✓' : messageType === 'error' ? '!' : 'i'}
+              </div>
+              <p className="font-black text-xs uppercase tracking-[0.1em]">{message}</p>
+            </div>
           </div>
         )}
 
         {/* Main Upload Component */}
-        <FileUpload
-          onSubmit={handleFileUploadSubmit}
-          loading={loading}
-        />
-
-        {/* Help Section */}
-        <div className="mt-20 grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-          <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition-colors">
-            <div className="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center mb-4 text-2xl">
-              📂
-            </div>
-            <h3 className="text-white font-bold mb-2">Multiple Formats</h3>
-            <p className="text-slate-400 text-sm leading-relaxed">
-              Support for Python scripts (.py), text documents (.txt), and PDF files (.pdf) for versatile assignment types.
-            </p>
-          </div>
-          <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition-colors">
-            <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center mb-4 text-2xl">
-              🤖
-            </div>
-            <h3 className="text-white font-bold mb-2">AI Analysis</h3>
-            <p className="text-slate-400 text-sm leading-relaxed">
-              Advanced AI models analyze code logic, structure, and content quality against your specific rubric.
-            </p>
-          </div>
-          <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition-colors">
-            <div className="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center mb-4 text-2xl">
-              📊
-            </div>
-            <h3 className="text-white font-bold mb-2">Detailed Results</h3>
-            <p className="text-slate-400 text-sm leading-relaxed">
-              Get comprehensive reports with scores, inline feedback, and areas for improvement for each student.
-            </p>
-          </div>
+        <div className="animate-fade-in delay-200">
+           <FileUpload
+            onSubmit={handleFileUploadSubmit}
+            loading={loading}
+          />
         </div>
+
+        {/* Decorative Grid Background (subtle) */}
+        <div className="fixed inset-0 pointer-events-none opacity-[0.03] z-[-1]" 
+             style={{ backgroundImage: `radial-gradient(#6366f1 1px, transparent 1px)`, backgroundSize: '40px 40px' }} />
       </div>
     </main>
   )
