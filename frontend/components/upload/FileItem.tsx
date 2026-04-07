@@ -8,52 +8,70 @@ interface FileItemProps {
 }
 
 export const FileItem: React.FC<FileItemProps> = ({ file, onRemove }) => {
-  const getFileIcon = (fileName: string) => {
-    const ext = fileName.split('.').pop()?.toLowerCase()
-    switch (ext) {
-      case 'py': return '🐍'
-      case 'cpp':
-      case 'cc':
-      case 'cxx':
-      case 'h':
-      case 'hpp': return '⚙️'
-      case 'pdf': return '📕'
-      default: return '📄'
-    }
-  }
-
   const formatSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes'
+    if (bytes === 0) return '0 B'
     const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB']
+    const sizes = ['B', 'KB', 'MB']
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
   }
 
+  const getFileTypeLabel = (fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase()
+    switch (ext) {
+      case 'py': return 'Python'
+      case 'cpp':
+      case 'cc':
+      case 'cxx': return 'C++'
+      case 'h':
+      case 'hpp': return 'Header'
+      case 'pdf': return 'PDF'
+      case 'txt': return 'Text'
+      default: return 'File'
+    }
+  }
+
+  const getFileColor = (fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase()
+    switch (ext) {
+      case 'py': return 'text-emerald-trust bg-emerald-trust/10 border-emerald-trust/20'
+      case 'cpp':
+      case 'cc':
+      case 'cxx':
+      case 'h':
+      case 'hpp': return 'text-violet-primary bg-violet-primary/10 border-violet-primary/20'
+      case 'pdf': return 'text-coral bg-coral/10 border-coral/20'
+      default: return 'text-frost-muted bg-frost-muted/10 border-frost-muted/20'
+    }
+  }
+
   return (
-    <div className="group flex items-center justify-between p-4 bg-slate-800/40 hover:bg-slate-800/60 transition-all rounded-xl border border-slate-700/50 hover:border-slate-600/50 backdrop-blur-sm">
-      <div className="flex items-center gap-4 overflow-hidden">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-600/20 flex items-center justify-center flex-shrink-0 border border-indigo-500/10 group-hover:border-indigo-500/30 transition-all">
-          <span className="text-xl">{getFileIcon(file.name)}</span>
+    <div className="flex items-center justify-between p-3.5 bg-surface-container-low rounded-lg border border-outline-variant/10 group hover:border-outline-variant/20 transition-all">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="w-9 h-9 rounded-lg bg-surface-container-highest flex items-center justify-center text-violet-primary shrink-0">
+          <span className="material-symbols-outlined text-[18px]">description</span>
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-slate-200 truncate group-hover:text-white transition-colors tracking-tight">
+          <p className="text-sm font-medium text-frost truncate">
             {file.name}
           </p>
-          <p className="text-xs text-indigo-400/60 font-medium">
-            {formatSize(file.size)}
-          </p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${getFileColor(file.name)}`}>
+              {getFileTypeLabel(file.name)}
+            </span>
+            <span className="text-[10px] text-frost-muted">
+              {formatSize(file.size)}
+            </span>
+          </div>
         </div>
       </div>
       <button
         type="button"
         onClick={onRemove}
-        className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
+        className="p-1.5 text-frost-muted hover:text-coral hover:bg-coral/10 rounded-md transition-all opacity-0 group-hover:opacity-100"
         title="Remove file"
       >
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-        </svg>
+        <span className="material-symbols-outlined text-[18px]">close</span>
       </button>
     </div>
   )

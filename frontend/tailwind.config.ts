@@ -9,32 +9,78 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Obsidian Scholar Design System
-        obsidian: '#0b1326',
-        'obsidian-deep': '#060e20',
-        'obsidian-light': '#131b2e',
-        'slate-surface': '#171f33',
-        'slate-surface-high': '#222a3d',
-        'slate-surface-highest': '#2d3449',
-        'slate-surface-bright': '#31394d',
-        violet: {
-          primary: '#c0c1ff',
-          container: '#8083ff',
-          fixed: '#e1e0ff',
-          dim: '#c0c1ff',
-          deep: '#6366F1',
-        },
-        'emerald-trust': '#4edea3',
-        'emerald-trust-container': '#00a572',
-        coral: '#ffb2b7',
-        'coral-container': '#ff516a',
-        frost: '#dae2fd',
-        'frost-muted': '#c7c4d7',
-        'frost-steel': '#908fa0',
-        ghost: '#464554',
+        // Core backgrounds
+        background: "#060d20",
+        obsidian: "#0B1326",
+        surface: "#060d20",
+        "surface-dim": "#060d20",
+        "surface-bright": "#1f2b49",
+        "surface-container": "#0f1930",
+        "surface-container-high": "#141f38",
+        "surface-container-highest": "#1a2540",
+        "surface-container-low": "#091328",
+        "surface-container-lowest": "#000000",
+        "surface-tint": "#ba9eff",
+        "surface-variant": "#1a2540",
+
+        // Primary palette
+        primary: "#ba9eff",
+        "primary-container": "#ae8dff",
+        "primary-dim": "#8455ef",
+        "primary-fixed": "#ae8dff",
+        "primary-fixed-dim": "#a27cff",
+        "violet-primary": "#C0C1FF",
+        "violet-container": "#8083FF",
+
+        // Secondary palette
+        secondary: "#9093ff",
+        "secondary-container": "#2f2ebe",
+        "secondary-dim": "#6063ee",
+        "secondary-fixed": "#cdcdff",
+        "secondary-fixed-dim": "#bdbeff",
+
+        // Tertiary / Success
+        tertiary: "#9bffce",
+        "tertiary-container": "#69f6b8",
+        "tertiary-dim": "#58e7ab",
+        "tertiary-fixed": "#69f6b8",
+        "tertiary-fixed-dim": "#58e7ab",
+        "emerald-trust": "#4EDEA3",
+
+        // Error / Danger
+        error: "#ff6e84",
+        "error-container": "#a70138",
+        "error-dim": "#d73357",
+        coral: "#FF6E84",
+
+        // Text colors
+        "on-background": "#dee5ff",
+        "on-surface": "#dee5ff",
+        "on-surface-variant": "#a3aac4",
+        "on-primary": "#39008c",
+        "on-primary-container": "#2b006e",
+        "on-secondary": "#080079",
+        "on-secondary-container": "#ccccff",
+        "on-tertiary": "#006443",
+        "on-tertiary-container": "#005a3c",
+        "on-error": "#490013",
+        "on-error-container": "#ffb2b9",
+        frost: "#DAE2FD",
+        "frost-muted": "#A3AAC4",
+        ghost: "#464554",
+
+        // Outlines / Borders
+        outline: "#6d758c",
+        "outline-variant": "#40475d",
+
+        // Inverse
+        "inverse-on-surface": "#4d556b",
+        "inverse-primary": "#6e3bd7",
+        "inverse-surface": "#faf8ff",
       },
       fontFamily: {
         inter: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Menlo', 'monospace'],
         grotesk: ['Space Grotesk', 'system-ui', 'sans-serif'],
       },
       keyframes: {

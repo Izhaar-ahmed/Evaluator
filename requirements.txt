@@ -6,3 +6,10 @@ google-generativeai
 python-multipart
 requests
 aiofiles
+# --- New dependencies for v2.0 ---
+psycopg2-binary
+tree-sitter
+tree-sitter-python
+tree-sitter-cpp
+sentence-transformers
+numpy

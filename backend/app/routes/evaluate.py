@@ -47,6 +47,14 @@ def evaluate(
         None,
         description="Custom rubric as plain text or JSON string (optional)",
     ),
+    topic: Optional[str] = Form(
+        None,
+        description="Topic tag for student progress tracking",
+    ),
+    test_cases: Optional[str] = Form(
+        None,
+        description="JSON string of test cases: '[{\"stdin\": \"5\\n3\", \"expected_output\": \"8\"}]'",
+    ),
     files: List[UploadFile] = File(
         ...,
         description="Student submission files",
@@ -60,6 +68,8 @@ def evaluate(
     - **problem_statement**: Problem description for code assignments
     - **ideal_reference**: Reference content for content assignments
     - **rubric_content**: Custom rubric as text or JSON (optional, uses default if not provided)
+    - **topic**: Topic tag for student progress tracking (e.g., 'sorting', 'graphs')
+    - **test_cases**: JSON string of test cases: '[{"stdin": "5\\n3", "expected_output": "8"}]'
     - **files**: Student submission files (.py, .cpp, .cc, .cxx, .h, .hpp, .txt, .pdf)
 
     Returns evaluation results with scores, feedback, and CSV export paths.
@@ -122,6 +132,23 @@ def evaluate(
                     rubric_warning = f"Error during LLM rubric parsing: {e}. Using default rubric."
                     print(rubric_warning)
 
+        # Parse test cases if provided as a standalone field
+        if test_cases:
+            try:
+                from backend.app.schemas import TestCase
+                tc_list = json.loads(test_cases)
+                parsed_test_cases = [TestCase(**tc) for tc in tc_list]
+                
+                # If no rubric provided, use an empty one to hold test cases
+                if not rubric:
+                    rubric = RubricConfig()
+                
+                # Attach parsed test cases to rubric
+                rubric.test_cases = parsed_test_cases
+            except (json.JSONDecodeError, ValueError) as e:
+                rubric_warning = f"Failed to parse 'test_cases' JSON: {e}"
+                print(rubric_warning)
+
         # Create evaluation request
         request = EvaluationRequest(
             assignment_type=assignment_type,
@@ -129,6 +156,7 @@ def evaluate(
             problem_statement=problem_statement,
             ideal_reference=ideal_reference,
             rubric=rubric,
+            topic_tag=topic,
         )
 
         # Evaluate via service layer

@@ -11,6 +11,13 @@ export interface EvaluationResponse {
     feedback: string[]
     assignment_type: string
     file: string
+    // --- Integrity fields (Feature 4) ---
+    flag_score?: number
+    flag_reasons?: string[]
+    // --- Student profile fields (Feature 6) ---
+    percentile?: number
+    improvement_delta?: number
+    trend?: string
   }>
   summary?: {
     total_submissions: number

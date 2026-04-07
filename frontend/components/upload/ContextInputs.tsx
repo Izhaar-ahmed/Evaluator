@@ -1,10 +1,14 @@
 'use client'
 
-import React from 'react'
+import React, { useState } from 'react'
 
 interface ContextInputsProps {
   problemStatement: string
   setProblemStatement: (val: string) => void
+  topic: string
+  setTopic: (val: string) => void
+  testCases: string
+  setTestCases: (val: string) => void
   rubricSource: 'text' | 'file'
   setRubricSource: (val: 'text' | 'file') => void
   rubricText: string
@@ -18,6 +22,10 @@ interface ContextInputsProps {
 export const ContextInputs: React.FC<ContextInputsProps> = ({
   problemStatement,
   setProblemStatement,
+  topic,
+  setTopic,
+  testCases,
+  setTestCases,
   rubricSource,
   setRubricSource,
   rubricText,
@@ -27,52 +35,102 @@ export const ContextInputs: React.FC<ContextInputsProps> = ({
   rubricInputRef,
   handleRubricFileSelect
 }) => {
+  const [showTestCases, setShowTestCases] = useState(false)
+
+  const inputClasses = "w-full bg-surface-container-lowest border border-outline-variant/20 text-frost px-4 py-3 rounded-lg focus:ring-2 focus:ring-violet-primary/40 focus:border-violet-primary/60 outline-none transition-all text-sm placeholder:text-frost-muted/40"
+
   return (
     <div className="space-y-6">
-      {/* Problem Context */}
-      <div className="bg-slate-900/40 backdrop-blur-xl border border-slate-700/50 rounded-3xl p-8 shadow-2xl space-y-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold text-white flex items-center gap-3">
-            <span className="text-2xl">📝</span> Problem Context
-          </h2>
-          <span className="px-4 py-1.5 text-xs font-bold tracking-widest uppercase text-slate-500 bg-slate-950/50 rounded-full border border-slate-800/50">
-            Optional
-          </span>
-        </div>
-        <div className="relative group">
-          <textarea
-            value={problemStatement}
-            onChange={(e) => setProblemStatement(e.target.value)}
-            placeholder="Describe the assignment requirements, specific constraints, or grading criteria..."
-            className="w-full h-40 px-6 py-5 bg-slate-950/40 border-2 border-slate-800/50 rounded-2xl text-slate-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/30 transition-all resize-none text-sm leading-relaxed scrollbar-thin scrollbar-thumb-slate-700 font-medium"
+      {/* Topic & Test Cases Row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-2">
+          <label className="block text-xs font-semibold uppercase tracking-wider text-frost-muted">
+            Topic / Subject
+          </label>
+          <input
+            type="text"
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder="e.g., Data Structures, Linear Algebra"
+            className={inputClasses}
           />
+        </div>
+
+        <div className="flex flex-col justify-end">
+          <button
+            type="button"
+            onClick={() => setShowTestCases(!showTestCases)}
+            className={`h-[46px] flex items-center justify-center gap-2 rounded-lg border transition-all text-sm font-medium ${
+              showTestCases
+                ? 'bg-violet-primary/10 border-violet-primary/30 text-violet-primary'
+                : 'bg-surface-container-high/40 border-outline-variant/20 text-frost-muted hover:text-frost hover:bg-surface-container-high/60'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">science</span>
+            {showTestCases ? 'Hide Test Cases' : 'Add Test Cases'}
+          </button>
         </div>
       </div>
 
-      {/* Rubric Definition */}
-      <div className="bg-slate-900/40 backdrop-blur-xl border border-slate-700/50 rounded-3xl p-8 shadow-2xl space-y-6">
+      {/* Test Cases (Collapsible) */}
+      {showTestCases && (
+        <div className="space-y-2 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-frost-muted">
+              Test Cases (JSON)
+            </label>
+            <span className="text-[10px] text-emerald-trust/60 font-medium">
+              Optional — for pass-rate calculation
+            </span>
+          </div>
+          <textarea
+            value={testCases}
+            onChange={(e) => setTestCases(e.target.value)}
+            placeholder={`[{"stdin": "5\\n3", "expected_output": "8"}]`}
+            className={`${inputClasses} min-h-[100px] resize-none font-mono text-xs`}
+          />
+        </div>
+      )}
+
+      {/* Problem Statement */}
+      <div className="space-y-2">
+        <label className="block text-xs font-semibold uppercase tracking-wider text-frost-muted">
+          Problem Statement
+        </label>
+        <textarea
+          value={problemStatement}
+          onChange={(e) => setProblemStatement(e.target.value)}
+          placeholder="Describe the assignment requirements..."
+          className={`${inputClasses} min-h-[120px] resize-none`}
+        />
+      </div>
+
+      {/* Rubric Section */}
+      <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold text-white flex items-center gap-3">
-            <span className="text-2xl">📊</span> Grading Rubric
-          </h2>
-          <div className="flex bg-slate-950/50 rounded-2xl p-1.5 border border-slate-700/30">
+          <label className="block text-xs font-semibold uppercase tracking-wider text-frost-muted">
+            Rubric Definition
+          </label>
+          <div className="flex p-0.5 bg-surface-container-lowest rounded-md border border-outline-variant/10">
             <button
               type="button"
               onClick={() => setRubricSource('text')}
-              className={`px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-xl transition-all duration-300 ${rubricSource === 'text'
-                ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white'
-                : 'text-slate-500 hover:text-slate-300'
-                }`}
+              className={`px-3 py-1.5 text-xs font-medium rounded transition-all ${
+                rubricSource === 'text'
+                  ? 'bg-violet-primary text-obsidian'
+                  : 'text-frost-muted hover:text-frost'
+              }`}
             >
-              Manual
+              Text Input
             </button>
             <button
               type="button"
               onClick={() => setRubricSource('file')}
-              className={`px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-xl transition-all duration-300 ${rubricSource === 'file'
-                ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white'
-                : 'text-slate-500 hover:text-slate-300'
-                }`}
+              className={`px-3 py-1.5 text-xs font-medium rounded transition-all ${
+                rubricSource === 'file'
+                  ? 'bg-violet-primary text-obsidian'
+                  : 'text-frost-muted hover:text-frost'
+              }`}
             >
               JSON File
             </button>
@@ -80,16 +138,14 @@ export const ContextInputs: React.FC<ContextInputsProps> = ({
         </div>
 
         {rubricSource === 'text' ? (
-          <div className="relative animate-fade-in group">
-            <textarea
-              value={rubricText}
-              onChange={(e) => setRubricText(e.target.value)}
-              placeholder={`Paste text description of the rubric or JSON data...`}
-              className="w-full h-48 px-6 py-5 bg-slate-950/40 border-2 border-slate-800/50 rounded-2xl text-indigo-300/80 placeholder-slate-600 font-mono text-xs focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/30 transition-all resize-none scrollbar-thin scrollbar-thumb-slate-700 leading-normal"
-            />
-          </div>
+          <textarea
+            value={rubricText}
+            onChange={(e) => setRubricText(e.target.value)}
+            placeholder="Enter rubric criteria or paste JSON schema..."
+            className={`${inputClasses} h-40 resize-none animate-fade-in`}
+          />
         ) : (
-          <div className="relative animate-fade-in">
+          <div className="animate-fade-in">
             <input
               ref={rubricInputRef}
               type="file"
@@ -97,34 +153,27 @@ export const ContextInputs: React.FC<ContextInputsProps> = ({
               onChange={handleRubricFileSelect}
               className="hidden"
             />
-            <div className="flex gap-4">
+            <div className="flex gap-3">
               <button
                 type="button"
                 onClick={() => rubricInputRef.current?.click()}
-                className="flex-1 px-6 py-5 bg-slate-950/40 border-2 border-slate-800/50 border-dashed rounded-2xl text-slate-400 hover:text-indigo-400 hover:border-indigo-500/50 hover:bg-slate-900/60 transition-all flex items-center justify-center gap-4 group"
+                className="flex-1 px-5 py-4 bg-surface-container-lowest border border-outline-variant/20 rounded-lg text-frost-muted hover:text-violet-primary hover:border-violet-primary/30 transition-all flex items-center justify-between"
               >
-                <div className="w-10 h-10 rounded-xl bg-slate-800/50 flex items-center justify-center group-hover:scale-110 transiton-transform duration-500">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                  </svg>
-                </div>
-                <span className="text-sm font-bold tracking-tight">
-                  {rubricFile ? rubricFile.name : 'Choose Rubric Payload'}
+                <span className="text-sm font-medium">
+                  {rubricFile ? rubricFile.name : 'Choose .json file...'}
                 </span>
+                <span className="material-symbols-outlined text-[20px] text-violet-primary">upload_file</span>
               </button>
               {rubricFile && (
                 <button
                   type="button"
                   onClick={() => setRubricFile(null)}
-                  className="px-6 py-5 bg-red-400/5 border-2 border-red-400/10 rounded-2xl text-red-400 hover:bg-red-400/10 transition-all"
+                  className="px-4 bg-coral/10 border border-coral/20 rounded-lg text-coral hover:bg-coral/20 transition-all"
                 >
-                  ✕
+                  <span className="material-symbols-outlined text-[20px]">close</span>
                 </button>
               )}
             </div>
-            <p className="mt-4 text-xs font-bold text-slate-500 tracking-widest text-center uppercase">
-              Expects optimized .json schema
-            </p>
           </div>
         )}
       </div>

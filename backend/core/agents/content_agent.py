@@ -93,7 +93,9 @@ class ContentEvaluationAgent(EvaluationAgent):
         
         # Analyze concept coverage
         coverage_score = self._evaluate_concept_coverage(
-            student_content, key_concepts, feedback
+            student_content, key_concepts, feedback,
+            ideal_reference=ideal_reference,
+            rubric_id=input_data.get("rubric_id", "default"),
         )
         
         # Fallback Gate: If LLM is disabled or uncertain, and coverage is zero, fail
@@ -257,15 +259,82 @@ class ContentEvaluationAgent(EvaluationAgent):
         return domain_terms[:12]
 
     def _evaluate_concept_coverage(
-        self, content: str, key_concepts: List[str], feedback: List[str]
+        self, content: str, key_concepts: List[str], feedback: List[str],
+        ideal_reference: str = "", rubric_id: str = "",
     ) -> float:
-        """Evaluate coverage of key concepts."""
-        score = 0
+        """
+        Evaluate coverage of key concepts using semantic similarity + keyword fallback.
 
+        Strategy:
+        1. Try embedding-based semantic scoring (if sentence-transformers available)
+        2. Run keyword matching in parallel
+        3. Final score = max(keyword_score * 0.5, semantic_score)
+           This prevents keyword gaming while rewarding paraphrasing.
+        """
         if not key_concepts:
             feedback.append("ℹ No key concepts specified for comparison.")
             return 60
 
+        # ── Keyword scoring (always runs — it's the floor) ──
+        keyword_score = self._keyword_coverage(content, key_concepts, feedback)
+
+        # ── Semantic scoring (optional — requires sentence-transformers) ──
+        semantic_score = None
+        try:
+            from backend.core.services.embedding_service import (
+                is_available,
+                semantic_coverage_score,
+                concept_hit_rate,
+            )
+            if is_available():
+                # Overall semantic similarity
+                if ideal_reference or rubric_id:
+                    sem = semantic_coverage_score(
+                        content,
+                        rubric_id=rubric_id or "default",
+                        ideal_answer=ideal_reference,
+                    )
+                    if sem is not None:
+                        semantic_score = sem
+
+                # Per-concept hit rate
+                hit_rate = concept_hit_rate(content, key_concepts)
+                if hit_rate is not None:
+                    concept_pct = hit_rate * 100
+                    # Blend: 60% semantic similarity + 40% concept hit rate
+                    if semantic_score is not None:
+                        semantic_score = 0.6 * semantic_score + 0.4 * concept_pct
+                    else:
+                        semantic_score = concept_pct
+
+                    if concept_pct >= 70:
+                        feedback.append(
+                            f"✓ Semantic analysis: {concept_pct:.0f}% of concepts "
+                            f"are semantically covered (paraphrasing OK)."
+                        )
+
+        except Exception as e:
+            # Graceful fallback — semantic scoring is optional
+            semantic_score = None
+
+        # ── Combine: semantic wins if it's higher, keyword stays as floor ──
+        if semantic_score is not None:
+            final_score = max(keyword_score * 0.5, semantic_score)
+            if semantic_score > keyword_score:
+                feedback.append(
+                    f"✓ Semantic scoring improved coverage: "
+                    f"{keyword_score:.0f} → {final_score:.0f} "
+                    "(paraphrased content detected)."
+                )
+        else:
+            final_score = keyword_score
+
+        return min(round(final_score), 100)
+
+    def _keyword_coverage(
+        self, content: str, key_concepts: List[str], feedback: List[str]
+    ) -> float:
+        """Pure keyword-based coverage scoring (original logic, now a sub-method)."""
         content_lower = content.lower()
         covered_concepts = [
             c for c in key_concepts
@@ -275,45 +344,47 @@ class ContentEvaluationAgent(EvaluationAgent):
             c for c in key_concepts
             if isinstance(c, str) and c.lower() not in content_lower
         ]
-        
-        # Store for LLM use
+
         self._last_missing_concepts = missing_concepts
-        
-        coverage_percent = (len(covered_concepts) / len(key_concepts)) * 100 if key_concepts else 0
+
+        coverage_percent = (len(covered_concepts) / len(key_concepts)) * 100
 
         if coverage_percent >= 80:
             score = 90
             feedback.append(
-                f"✓ Excellent concept coverage ({len(covered_concepts)}/{len(key_concepts)} concepts)."
+                f"✓ Excellent keyword coverage ({len(covered_concepts)}/{len(key_concepts)} concepts)."
             )
             if missing_concepts and not self.llm_service.enabled:
                 feedback.append(f"→ Missing: {', '.join(missing_concepts[:5])}")
         elif coverage_percent >= 60:
             score = 70
             feedback.append(
-                f"→ Good coverage ({len(covered_concepts)}/{len(key_concepts)} concepts)."
+                f"→ Good keyword coverage ({len(covered_concepts)}/{len(key_concepts)} concepts)."
             )
             if not self.llm_service.enabled:
                 feedback.append(f"→ Missing: {', '.join(missing_concepts[:5])}")
         elif coverage_percent >= 40:
             score = 50
             feedback.append(
-                f"→ Partial coverage ({len(covered_concepts)}/{len(key_concepts)} concepts)."
+                f"→ Partial keyword coverage ({len(covered_concepts)}/{len(key_concepts)} concepts)."
             )
             if not self.llm_service.enabled:
                 feedback.append(f"→ Missing key concepts: {', '.join(missing_concepts[:7])}")
         elif coverage_percent >= 20:
-             score = 20
-             feedback.append(f"→ Low coverage ({len(covered_concepts)}/{len(key_concepts)} concepts).")
+            score = 20
+            feedback.append(
+                f"→ Low keyword coverage ({len(covered_concepts)}/{len(key_concepts)} concepts)."
+            )
         else:
             score = 0
             feedback.append(
-                f"❌ Very low concept coverage ({len(covered_concepts)}/{len(key_concepts)} concepts)."
+                f"❌ Very low keyword coverage ({len(covered_concepts)}/{len(key_concepts)} concepts)."
             )
             if not self.llm_service.enabled:
                 feedback.append(f"❌ Missing critical concepts: {', '.join(missing_concepts[:10])}")
 
         return min(score, 100)
+
 
     def _evaluate_alignment(
         self, content: str, rubric: dict, feedback: List[str]

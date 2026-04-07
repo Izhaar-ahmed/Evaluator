@@ -45,6 +45,7 @@ class EvaluatorService:
                 folder_path=request.submission_folder,
                 problem_statement=request.problem_statement,
                 ideal_reference=request.ideal_reference,
+                topic_tag=getattr(request, 'topic_tag', None),
             )
 
             # Convert results
@@ -103,6 +104,13 @@ class EvaluatorService:
                 for k, v in rubric_config.dimensions.items()
             }
 
+        # Add test cases if provided
+        if rubric_config.test_cases:
+            rubric_dict["test_cases"] = [
+                tc.model_dump() if hasattr(tc, "model_dump") else tc
+                for tc in rubric_config.test_cases
+            ]
+
         return Rubric(rubric_dict)
 
     def _format_results(
@@ -139,6 +147,13 @@ class EvaluatorService:
                 feedback=feedback or [],
                 assignment_type=result.get("assignment_type", "unknown"),
                 file=result.get("file", ""),
+                # Integrity fields
+                flag_score=result.get("flag_score"),
+                flag_reasons=result.get("flag_reasons"),
+                # Student profile fields
+                percentile=result.get("percentile"),
+                improvement_delta=result.get("improvement_delta"),
+                trend=result.get("trend"),
             )
             formatted.append(item)
 

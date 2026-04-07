@@ -1,11 +1,18 @@
 """
-FastAPI application entry point for assignment evaluation system.
+FastAPI application entry point for assignment evaluation system v2.0.
 
-Instructor-only REST API for evaluating student submissions.
-No authentication, no database.
+Instructor REST API for evaluating student submissions with:
+- Code execution via Judge0
+- Tree-sitter unified parsing
+- Semantic similarity scoring
+- Plagiarism detection
+- Human review queue
+- Student profile tracking
 """
 
 import os
+from contextlib import asynccontextmanager
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,16 +20,35 @@ from fastapi.middleware.cors import CORSMiddleware
 # Load environment variables
 load_dotenv()
 
-# Step 1: ENV Confirmation
+# ENV confirmation
 LLM_ENABLED = os.getenv("LLM_ENABLED", "false").lower() == "true"
 print(f"LLM_ENABLED = {LLM_ENABLED}")
 
 from backend.app.routes import evaluate_router
+from backend.app.routes.review_routes import router as review_router
+from backend.app.routes.student_routes import router as student_router
+
+
+# ---------------------------------------------------------------------------
+# Lifespan: init database on startup
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize database schema on startup."""
+    try:
+        from backend.core.services.database import init_db
+        init_db()
+    except Exception as e:
+        print(f"⚠ Database initialization skipped: {e}")
+    yield
+
 
 app = FastAPI(
     title="Assignment Evaluation API",
     description="REST API for evaluating student code and content submissions",
-    version="1.0.0",
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware (for frontend access)
@@ -46,7 +72,19 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "ok"}
+    db_status = "unknown"
+    try:
+        from backend.core.services.database import get_db
+        db_status = "connected" if get_db().available else "unavailable"
+    except Exception:
+        db_status = "unavailable"
+
+    return {
+        "status": "ok",
+        "version": "2.0.0",
+        "llm_enabled": LLM_ENABLED,
+        "database": db_status,
+    }
 
 
 # Root endpoint
@@ -54,15 +92,25 @@ async def health_check():
 async def root():
     """API root endpoint."""
     return {
-        "message": "Assignment Evaluation API",
-        "version": "1.0.0",
+        "message": "Assignment Evaluation API v2.0",
+        "version": "2.0.0",
         "docs": "/docs",
         "redoc": "/redoc",
+        "features": [
+            "Judge0 test execution",
+            "Tree-sitter parsing",
+            "Semantic similarity",
+            "Plagiarism detection",
+            "Review queue",
+            "Student tracking",
+        ],
     }
 
 
 # Include routers
 app.include_router(evaluate_router)
+app.include_router(review_router)
+app.include_router(student_router)
 
 
 if __name__ == "__main__":

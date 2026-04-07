@@ -5,6 +5,13 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+class TestCase(BaseModel):
+    """A single test case for code execution."""
+
+    stdin: str = Field(..., description="Standard input for the test case")
+    expected_output: str = Field(..., description="Expected standard output")
+
+
 class RubricDimension(BaseModel):
     """Rubric dimension configuration."""
 
@@ -22,7 +29,11 @@ class RubricConfig(BaseModel):
     version: Optional[str] = Field(default="1.0", description="Rubric version")
     dimensions: Optional[Dict[str, RubricDimension]] = Field(
         default=None,
-        description="Dimensions with code and content weights. If not provided, uses default.",
+        description="Dimensions with code and content weights.",
+    )
+    test_cases: Optional[List[TestCase]] = Field(
+        default=None,
+        description="Test cases for code execution via Judge0.",
     )
 
     class Config:
@@ -77,6 +88,10 @@ class EvaluationRequest(BaseModel):
         default=None,
         description="Custom rubric configuration. If not provided, uses default rubric.",
     )
+    topic_tag: Optional[str] = Field(
+        default=None,
+        description="Topic tag for student progress tracking (e.g., 'sorting', 'graphs').",
+    )
 
     class Config:
         json_schema_extra = {
@@ -99,6 +114,28 @@ class EvaluationResultItem(BaseModel):
     feedback: List[str] = Field(..., description="List of feedback items")
     assignment_type: str = Field(..., description="Type of assignment evaluated")
     file: str = Field(..., description="Submission filename")
+    # --- Integrity fields (Feature 4) ---
+    flag_score: Optional[float] = Field(
+        default=None,
+        description="Integrity flag score (0–1). >0.7 triggers review queue.",
+    )
+    flag_reasons: Optional[List[str]] = Field(
+        default=None,
+        description="Reasons for integrity flag.",
+    )
+    # --- Student profile fields (Feature 6) ---
+    percentile: Optional[int] = Field(
+        default=None,
+        description="Percentile rank within class (0–100).",
+    )
+    improvement_delta: Optional[float] = Field(
+        default=None,
+        description="Score change vs student's recent average.",
+    )
+    trend: Optional[str] = Field(
+        default=None,
+        description="Performance trend: 'improving', 'stable', or 'declining'.",
+    )
 
 
 class EvaluationResponse(BaseModel):
