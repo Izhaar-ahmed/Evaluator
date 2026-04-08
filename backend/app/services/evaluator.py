@@ -92,17 +92,21 @@ class EvaluatorService:
         if rubric_config is None:
             return None
 
-        # Convert to dict format expected by Rubric
+        # Start with default rubric structure (ensures dimensions always exist)
+        default = Rubric.DEFAULT_RUBRIC.copy()
         rubric_dict = {
-            "name": rubric_config.name or "Standard Rubric",
-            "version": rubric_config.version or "1.0",
+            "name": rubric_config.name or default.get("name", "Standard Rubric"),
+            "version": rubric_config.version or default.get("version", "1.0"),
         }
 
+        # Use custom dimensions if provided, otherwise use defaults
         if rubric_config.dimensions:
             rubric_dict["dimensions"] = {
                 k: (v.model_dump() if hasattr(v, "model_dump") else v)
                 for k, v in rubric_config.dimensions.items()
             }
+        else:
+            rubric_dict["dimensions"] = default.get("dimensions", {})
 
         # Add test cases if provided
         if rubric_config.test_cases:

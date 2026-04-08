@@ -3,59 +3,47 @@
 import Link from 'next/link'
 import { useState, useEffect } from 'react'
 import { ResultsStore } from '@/lib/results-store'
-import type { EvaluationResponse } from '@/lib/results-store'
+import type { EvaluationResult } from '@/lib/results-store'
 import { ResultCard } from '@/components/results/ResultCard'
 import AppNavbar from '@/components/AppNavbar'
 
-interface StudentResult {
-  id: string
-  name: string
-  score: number
-  maxScore: number
-  percentage: number
-  feedback: string[]
-  type: string
-  execution_results?: Array<{ status: string }>
-  flag_score?: number
-  flag_reasons?: string[]
-  percentile?: number
-  improvement_delta?: number
-  trend?: string
-}
-
 export default function ResultsPage() {
-  const [results, setResults] = useState<StudentResult[]>([])
-  const [apiResponse, setApiResponse] = useState<EvaluationResponse | null>(null)
+  const [results, setResults] = useState<EvaluationResult[]>([])
+  const [latestCsv, setLatestCsv] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const storedResults = ResultsStore.getResults()
+    const load = async () => {
+      try {
+        const { results: historyResults, batches } = await ResultsStore.fetchHistory()
 
-    if (storedResults && storedResults.status === 'success' && storedResults.results) {
-      setApiResponse(storedResults)
-
-      const formattedResults: StudentResult[] = storedResults.results.map(
-        (result, idx) => ({
-          id: String(idx),
-          name: result.submission_id,
-          score: result.final_score,
-          maxScore: result.max_score,
-          percentage: result.percentage,
-          feedback: result.feedback,
-          type: result.assignment_type,
-          flag_score: result.flag_score,
-          flag_reasons: result.flag_reasons,
-          percentile: result.percentile,
-          improvement_delta: result.improvement_delta,
-          trend: result.trend
-        })
-      )
-
-      setResults(formattedResults)
-    } else {
-      setResults([])
+        if (historyResults.length > 0) {
+          setResults(historyResults)
+          // Get CSV from latest batch
+          if (batches.length > 0 && batches[0].csv_output_path) {
+            setLatestCsv(batches[0].csv_output_path)
+          }
+        } else {
+          // Fall back to session storage for latest evaluation
+          const session = ResultsStore.getResults()
+          if (session?.status === 'success' && session.results) {
+            setResults(session.results)
+            if (session.csv_output_path) {
+              setLatestCsv(session.csv_output_path)
+            }
+          }
+        }
+      } catch {
+        // Last resort: session storage
+        const session = ResultsStore.getResults()
+        if (session?.status === 'success' && session.results) {
+          setResults(session.results)
+        }
+      } finally {
+        setLoading(false)
+      }
     }
-    setLoading(false)
+    load()
   }, [])
 
   const averagePercentage =
@@ -66,15 +54,7 @@ export default function ResultsPage() {
   const totalIntegrityFlags =
     results.reduce((count, r) => count + (r.flag_reasons?.length || 0), 0)
 
-  const averagePassRate =
-    results.length > 0
-      ? results.reduce((sum, r) => {
-          const passRate = r.execution_results && r.execution_results.length > 0
-            ? r.execution_results.filter(x => x.status === 'Accepted').length / r.execution_results.length
-            : 0
-          return sum + passRate
-        }, 0) / results.length * 100
-      : 0
+  const uniqueStudents = new Set(results.map(r => r.submission_id)).size
 
   if (loading) {
     return (
@@ -99,7 +79,9 @@ export default function ResultsPage() {
               Results Dashboard
             </h1>
             <p className="text-frost-muted text-base">
-              View evaluation results and performance analytics.
+              {results.length > 0
+                ? `${results.length} evaluation${results.length !== 1 ? 's' : ''} across ${uniqueStudents} student${uniqueStudents !== 1 ? 's' : ''}`
+                : 'View evaluation results and performance analytics.'}
             </p>
           </div>
           {results.length > 0 && (
@@ -110,9 +92,9 @@ export default function ResultsPage() {
               >
                 New Evaluation
               </Link>
-              {apiResponse?.csv_output_path && (
+              {latestCsv && (
                 <a
-                  href={apiResponse.csv_output_path}
+                  href={latestCsv}
                   download
                   className="px-5 py-2.5 bg-gradient-to-r from-violet-primary to-violet-container text-obsidian text-sm font-semibold rounded-lg hover:opacity-90 transition-all shadow-violet flex items-center gap-2"
                 >
@@ -140,14 +122,13 @@ export default function ResultsPage() {
                 </div>
               </div>
 
-              {/* Pass Rate */}
+              {/* Total Evaluations */}
               <div className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6 hover:border-outline-variant/20 transition-all">
-                <p className="text-xs font-semibold uppercase tracking-wider text-frost-muted mb-3">Pass Rate</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-frost-muted mb-3">Total Evaluations</p>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-bold font-mono text-emerald-trust">{averagePassRate.toFixed(1)}</span>
-                  <span className="text-lg text-frost-muted">%</span>
+                  <span className="text-4xl font-bold font-mono text-emerald-trust">{results.length}</span>
                 </div>
-                <p className="mt-3 text-xs text-frost-muted">Based on test case execution</p>
+                <p className="mt-3 text-xs text-frost-muted">{uniqueStudents} unique student{uniqueStudents !== 1 ? 's' : ''} evaluated</p>
               </div>
 
               {/* Integrity Alerts */}
@@ -167,15 +148,15 @@ export default function ResultsPage() {
             {/* Results List */}
             <section>
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-lg font-semibold text-frost">Evaluation Results</h2>
-                <span className="text-xs text-frost-muted">{results.length} submission{results.length !== 1 ? 's' : ''}</span>
+                <h2 className="text-lg font-semibold text-frost">All Evaluation Results</h2>
+                <span className="text-xs text-frost-muted">{results.length} result{results.length !== 1 ? 's' : ''}</span>
               </div>
               <div className="space-y-3">
                 {results.map((result, idx) => (
                   <ResultCard
-                    key={result.id}
+                    key={`${result.submission_id}-${result.batch_id || idx}-${idx}`}
                     index={idx + 1}
-                    name={result.name}
+                    name={result.submission_id}
                     percentage={result.percentage}
                     feedback={result.feedback}
                     flag_score={result.flag_score}

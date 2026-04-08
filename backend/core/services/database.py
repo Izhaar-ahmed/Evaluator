@@ -68,6 +68,41 @@ CREATE TABLE IF NOT EXISTS student_scores (
 );
 CREATE INDEX IF NOT EXISTS idx_scores_student ON student_scores(student_id);
 CREATE INDEX IF NOT EXISTS idx_scores_topic ON student_scores(student_id, topic_tag);
+
+-- Persistent evaluation results
+CREATE TABLE IF NOT EXISTS evaluation_results (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id          TEXT NOT NULL,
+    submission_id     TEXT NOT NULL,
+    assignment_type   TEXT NOT NULL,
+    file              TEXT,
+    final_score       FLOAT NOT NULL,
+    max_score         FLOAT DEFAULT 100,
+    percentage        FLOAT NOT NULL,
+    feedback          JSONB,
+    flag_score        FLOAT,
+    flag_reasons      JSONB,
+    percentile        INT,
+    improvement_delta FLOAT,
+    trend             TEXT,
+    evaluated_at      TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_eval_batch ON evaluation_results(batch_id);
+CREATE INDEX IF NOT EXISTS idx_eval_time ON evaluation_results(evaluated_at DESC);
+
+-- Evaluation batch summary
+CREATE TABLE IF NOT EXISTS evaluation_batches (
+    batch_id                 TEXT PRIMARY KEY,
+    assignment_type          TEXT,
+    total_submissions        INT,
+    average_score            FLOAT,
+    average_percentage       FLOAT,
+    highest_score            FLOAT,
+    lowest_score             FLOAT,
+    csv_output_path          TEXT,
+    csv_detailed_output_path TEXT,
+    evaluated_at             TIMESTAMPTZ DEFAULT now()
+);
 """
 
 

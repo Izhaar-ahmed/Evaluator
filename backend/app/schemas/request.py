@@ -6,10 +6,27 @@ from pydantic import BaseModel, Field
 
 
 class TestCase(BaseModel):
-    """A single test case for code execution."""
+    """A single test case for code execution.
+    
+    Accepts both formats:
+      - {"stdin": "...", "expected_output": "..."}
+      - {"input": "...", "output": "..."}
+    """
 
-    stdin: str = Field(..., description="Standard input for the test case")
-    expected_output: str = Field(..., description="Expected standard output")
+    stdin: str = Field(default="", description="Standard input for the test case")
+    expected_output: str = Field(default="", description="Expected standard output")
+
+    @classmethod
+    def from_flexible(cls, data: dict) -> "TestCase":
+        """Create TestCase from dict with flexible key names."""
+        stdin = data.get("stdin") or data.get("input") or ""
+        expected_output = data.get("expected_output") or data.get("output") or ""
+        # Handle case where input/output are non-string (e.g., lists, ints)
+        if not isinstance(stdin, str):
+            stdin = str(stdin)
+        if not isinstance(expected_output, str):
+            expected_output = str(expected_output)
+        return cls(stdin=stdin, expected_output=expected_output)
 
 
 class RubricDimension(BaseModel):

@@ -19,6 +19,9 @@ class LLMService:
         self.model_name = os.getenv("LLM_MODEL", "gemini-2.0-flash")
         self._client = None
         self._setup_done = False
+        self._rate_limited = False  # Track if we're in a cooldown period
+        self._consecutive_failures = 0
+        self._max_failures_before_disable = 3  # Disable after 3 consecutive failures
 
     def _ensure_setup(self):
         """Lazy initialization of the Gemini client."""
@@ -32,9 +35,9 @@ class LLMService:
 
         try:
             genai.configure(api_key=self.api_key)
-            # Use a default model first, can be overridden during generation
             self._client = genai.GenerativeModel(self.model_name)
             self._setup_done = True
+            print(f"✓ LLM service initialized with model: {self.model_name} (key: ...{self.api_key[-6:]})")
         except Exception as e:
             print(f"WARNING: Failed to initialize Gemini: {e}. Disabling LLM.")
             self.enabled = False
@@ -244,10 +247,21 @@ Verdict: [RELEVANT/PARTIAL/IRRELEVANT/UNCERTAIN]
                     return "PARTIAL"
                     
             except Exception as e:
-                print(f"LLM Relevance Check failed: {e}")
+                err_str = str(e)
+                self._consecutive_failures += 1
+                if "429" in err_str or "quota" in err_str.lower():
+                    self._rate_limited = True
+                    print(f"LLM Relevance Check: rate limited. Returning UNCERTAIN.")
+                else:
+                    print(f"LLM Relevance Check failed: {e}")
+                
+                if self._consecutive_failures >= self._max_failures_before_disable:
+                    print(f"WARNING: {self._consecutive_failures} consecutive LLM failures. Disabling for this session.")
+                    self.enabled = False
                 continue
         
-        # Fail-closed: If LLM fails, treat as uncertain (which will be handled conservatively)
+        # CRITICAL: If LLM fails, ALWAYS return UNCERTAIN — NEVER IRRELEVANT.
+        # Returning IRRELEVANT on failure would unfairly crush student scores.
         return "UNCERTAIN"
 
     def parse_rubric_text(self, text: str) -> Optional[Dict[str, Any]]:

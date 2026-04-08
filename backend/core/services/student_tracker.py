@@ -196,6 +196,178 @@ def get_score_history(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Skill breakdown (per-topic averages)
+# ---------------------------------------------------------------------------
+
+def get_skill_breakdown(student_id: str) -> List[Dict]:
+    """
+    Get a student's average score grouped by topic_tag.
+
+    Returns:
+        List of {topic_tag, avg_score, submission_count}, sorted by count desc.
+    """
+    db = get_db()
+    if not db.available:
+        return []
+
+    rows = db.execute(
+        """
+        SELECT topic_tag,
+               ROUND(AVG(score)::numeric, 1) AS avg_score,
+               COUNT(*)::int                  AS submission_count
+        FROM student_scores
+        WHERE student_id = %s AND topic_tag IS NOT NULL AND topic_tag != ''
+        GROUP BY topic_tag
+        ORDER BY submission_count DESC
+        """,
+        [student_id],
+    )
+
+    result = []
+    for r in (rows or []):
+        entry = dict(r)
+        entry["avg_score"] = float(entry["avg_score"])
+        result.append(entry)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Class-wide percentile
+# ---------------------------------------------------------------------------
+
+def get_class_percentile(student_id: str) -> Dict[str, Any]:
+    """
+    Compute a student's percentile rank across the entire class.
+
+    Uses each student's average score over all assignments as their
+    representative score, then computes the percentile for the target student.
+
+    Returns:
+        {
+            "percentile": int (0–100),
+            "class_size": int,
+            "student_avg": float | None
+        }
+    """
+    db = get_db()
+    if not db.available:
+        return {"percentile": 0, "class_size": 0, "student_avg": None}
+
+    # All students' averages
+    rows = db.execute(
+        """
+        SELECT student_id, AVG(score) AS avg_score
+        FROM student_scores
+        GROUP BY student_id
+        """
+    )
+
+    if not rows:
+        return {"percentile": 0, "class_size": 0, "student_avg": None}
+
+    averages = {r["student_id"]: float(r["avg_score"]) for r in rows}
+    student_avg = averages.get(student_id)
+
+    if student_avg is None:
+        return {"percentile": 0, "class_size": len(averages), "student_avg": None}
+
+    all_avgs = list(averages.values())
+    percentile = compute_percentile(student_avg, all_avgs)
+
+    return {
+        "percentile": percentile,
+        "class_size": len(averages),
+        "student_avg": round(student_avg, 1),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Student summary stats
+# ---------------------------------------------------------------------------
+
+def get_student_summary(student_id: str) -> Dict[str, Any]:
+    """
+    Compute summary statistics for a student.
+
+    Returns:
+        {
+            "total_submissions": int,
+            "average_score": float,
+            "best_score": float,
+            "worst_score": float,
+            "cumulative_grade": str,   # e.g. "A-", "B+", "C"
+            "gpa": float,              # 4.0 scale
+        }
+    """
+    db = get_db()
+    if not db.available:
+        return {
+            "total_submissions": 0, "average_score": 0,
+            "best_score": 0, "worst_score": 0,
+            "cumulative_grade": "N/A", "gpa": 0.0,
+        }
+
+    row = db.execute_one(
+        """
+        SELECT COUNT(*)::int AS total,
+               ROUND(AVG(score)::numeric, 1) AS avg_score,
+               MAX(score) AS best,
+               MIN(score) AS worst
+        FROM student_scores
+        WHERE student_id = %s
+        """,
+        [student_id],
+    )
+
+    if not row or row["total"] == 0:
+        return {
+            "total_submissions": 0, "average_score": 0,
+            "best_score": 0, "worst_score": 0,
+            "cumulative_grade": "N/A", "gpa": 0.0,
+        }
+
+    avg = float(row["avg_score"])
+    grade, gpa = _score_to_grade(avg)
+
+    return {
+        "total_submissions": row["total"],
+        "average_score": avg,
+        "best_score": float(row["best"]),
+        "worst_score": float(row["worst"]),
+        "cumulative_grade": grade,
+        "gpa": gpa,
+    }
+
+
+def _score_to_grade(score: float):
+    """Convert a numeric score (0-100) to letter grade + GPA."""
+    if score >= 93:
+        return "A", 4.0
+    elif score >= 90:
+        return "A-", 3.7
+    elif score >= 87:
+        return "B+", 3.3
+    elif score >= 83:
+        return "B", 3.0
+    elif score >= 80:
+        return "B-", 2.7
+    elif score >= 77:
+        return "C+", 2.3
+    elif score >= 73:
+        return "C", 2.0
+    elif score >= 70:
+        return "C-", 1.7
+    elif score >= 67:
+        return "D+", 1.3
+    elif score >= 63:
+        return "D", 1.0
+    elif score >= 60:
+        return "D-", 0.7
+    else:
+        return "F", 0.0
+
+
 def format_report_card(
     student_id: str,
     score: float,

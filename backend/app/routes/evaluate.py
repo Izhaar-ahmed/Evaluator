@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 
 from backend.app.schemas import EvaluationRequest, EvaluationResponse, RubricConfig
 from backend.app.services import EvaluatorService
+from backend.core.services.evaluation_store import save_evaluation_batch, get_all_evaluations
 from utils.llm_service import LLMService
 
 router = APIRouter(prefix="/api", tags=["evaluation"])
@@ -137,14 +138,23 @@ def evaluate(
             try:
                 from backend.app.schemas import TestCase
                 tc_list = json.loads(test_cases)
-                parsed_test_cases = [TestCase(**tc) for tc in tc_list]
+                if not isinstance(tc_list, list):
+                    tc_list = [tc_list]
+                # Use from_flexible to handle both {stdin,expected_output} and {input,output}
+                parsed_test_cases = [TestCase.from_flexible(tc) for tc in tc_list]
+                # Filter out empty test cases
+                parsed_test_cases = [tc for tc in parsed_test_cases if tc.stdin or tc.expected_output]
                 
-                # If no rubric provided, use an empty one to hold test cases
-                if not rubric:
-                    rubric = RubricConfig()
-                
-                # Attach parsed test cases to rubric
-                rubric.test_cases = parsed_test_cases
+                if parsed_test_cases:
+                    # If no rubric provided, use an empty one to hold test cases
+                    if not rubric:
+                        rubric = RubricConfig()
+                    
+                    # Attach parsed test cases to rubric
+                    rubric.test_cases = parsed_test_cases
+                    print(f"✓ Parsed {len(parsed_test_cases)} test cases")
+                else:
+                    rubric_warning = "Test cases parsed but none had valid stdin/expected_output."
             except (json.JSONDecodeError, ValueError) as e:
                 rubric_warning = f"Failed to parse 'test_cases' JSON: {e}"
                 print(rubric_warning)
@@ -180,6 +190,19 @@ def evaluate(
         if rubric_warning:
             response.message += f" | Warning: {rubric_warning}"
 
+        # Persist results to database
+        if response.status == "success" and response.results:
+            try:
+                result_dicts = [r.model_dump() for r in response.results]
+                save_evaluation_batch(
+                    results=result_dicts,
+                    summary=response.summary,
+                    csv_output_path=response.csv_output_path,
+                    csv_detailed_output_path=response.csv_detailed_output_path,
+                )
+            except Exception as persist_err:
+                print(f"Evaluation persistence failed (non-fatal): {persist_err}")
+
         return response
 
     except Exception as e:
@@ -192,3 +215,60 @@ def evaluate(
     finally:
         # Clean up temporary directory
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@router.get("/evaluations/history")
+def evaluation_history():
+    """Retrieve all past evaluation results from the database."""
+    data = get_all_evaluations(limit=200)
+    return {"status": "success", **data}
+
+
+@router.delete("/evaluations/cleanup")
+def cleanup_evaluations(below_score: float = 10.0):
+    """
+    Remove evaluation results with scores below a threshold.
+    
+    Useful for cleaning up broken evaluation results (e.g., old 2.2 scores).
+    
+    Query params:
+    - below_score: Remove results with percentage below this value (default: 10.0)
+    """
+    from backend.core.services.database import get_db
+    
+    db = get_db()
+    if not db.available:
+        raise HTTPException(503, "Database unavailable")
+    
+    try:
+        # Count affected rows first
+        count_row = db.execute_one(
+            "SELECT COUNT(*) as cnt FROM evaluation_results WHERE percentage < %s",
+            [below_score],
+        )
+        count = count_row["cnt"] if count_row else 0
+        
+        # Delete the results
+        db.execute(
+            "DELETE FROM evaluation_results WHERE percentage < %s",
+            [below_score],
+        )
+        
+        # Clean up orphaned batches
+        db.execute(
+            """
+            DELETE FROM evaluation_batches
+            WHERE batch_id NOT IN (
+                SELECT DISTINCT batch_id FROM evaluation_results WHERE batch_id IS NOT NULL
+            )
+            """
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Removed {count} evaluation results with score below {below_score}",
+            "removed_count": count,
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Cleanup failed: {e}")
+

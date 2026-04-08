@@ -4,16 +4,29 @@ Human review queue service.
 Routes uncertain, flagged, or boundary-score submissions to a persistent
 queue that teachers can review and override.
 
+v2.1: Added in-memory fallback when PostgreSQL is unavailable.
+         This ensures the review queue always works regardless of DB state.
+
 Trigger conditions:
 - LLM verdict is UNCERTAIN
 - flag_score > 0.7  (integrity concern)
 - Final score within 5 points of a grade boundary (25, 50, 75)
+- Final score < 10 (likely evaluation failure)
 """
 
 import json
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from backend.core.services.database import get_db
+
+
+# ---------------------------------------------------------------------------
+# In-memory fallback store (used when PostgreSQL is unavailable)
+# ---------------------------------------------------------------------------
+
+_MEMORY_QUEUE: Dict[str, Dict] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +63,15 @@ def _should_queue(result: Dict[str, Any]) -> List[str]:
             triggers.append("BOUNDARY")
             break
 
+    # Trigger 4: Suspiciously low score (likely evaluation failure)
+    if final_score < 10:
+        triggers.append("LOW_SCORE")
+
+    # Trigger 5: Integrity flag_reasons exist even if flag_score is low
+    flag_reasons = result.get("flag_reasons", [])
+    if flag_reasons and len(flag_reasons) > 0 and "FLAG" not in triggers:
+        triggers.append("FLAG")
+
     return triggers
 
 
@@ -75,10 +97,6 @@ def maybe_queue_for_review(
     Returns:
         The review queue entry ID if queued, None otherwise.
     """
-    db = get_db()
-    if not db.available:
-        return None
-
     triggers = _should_queue(result)
     if not triggers:
         return None
@@ -89,23 +107,46 @@ def maybe_queue_for_review(
     else:
         flag_reasons_json = json.dumps([])
 
-    row = db.execute_one(
-        """
-        INSERT INTO review_queue
-            (submission_id, student_id, assignment_id, trigger, auto_score, flag_reasons)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        [
-            submission_id,
-            student_id,
-            assignment_id,
-            triggers[0],  # Primary trigger
-            result.get("final_score", 0),
-            flag_reasons_json,
-        ],
-    )
-    return str(row["id"]) if row else None
+    # Try database first
+    db = get_db()
+    if db.available:
+        try:
+            row = db.execute_one(
+                """
+                INSERT INTO review_queue
+                    (submission_id, student_id, assignment_id, trigger, auto_score, flag_reasons)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                [
+                    submission_id,
+                    student_id,
+                    assignment_id,
+                    triggers[0],  # Primary trigger
+                    result.get("final_score", 0),
+                    flag_reasons_json,
+                ],
+            )
+            return str(row["id"]) if row else None
+        except Exception as e:
+            print(f"DB review insert failed, falling back to memory: {e}")
+
+    # Fallback: in-memory queue
+    review_id = str(uuid.uuid4())
+    _MEMORY_QUEUE[review_id] = {
+        "id": review_id,
+        "submission_id": submission_id,
+        "student_id": student_id,
+        "assignment_id": assignment_id,
+        "trigger": triggers[0],
+        "auto_score": result.get("final_score", 0),
+        "flag_reasons": json.loads(flag_reasons_json),
+        "status": "pending",
+        "teacher_score": None,
+        "teacher_notes": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return review_id
 
 
 def get_pending_reviews(
@@ -113,44 +154,63 @@ def get_pending_reviews(
     limit: int = 50,
 ) -> List[Dict]:
     """Get pending review items, optionally filtered by assignment."""
+    # Try database first
     db = get_db()
-    if not db.available:
-        return []
+    if db.available:
+        try:
+            if assignment_id:
+                rows = db.execute(
+                    """
+                    SELECT * FROM review_queue
+                    WHERE status = 'pending' AND assignment_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    [assignment_id, limit],
+                )
+            else:
+                rows = db.execute(
+                    """
+                    SELECT * FROM review_queue
+                    WHERE status = 'pending'
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    [limit],
+                )
+            if rows:
+                return _serialize_rows(rows)
+        except Exception as e:
+            print(f"DB review fetch failed, falling back to memory: {e}")
 
-    if assignment_id:
-        rows = db.execute(
-            """
-            SELECT * FROM review_queue
-            WHERE status = 'pending' AND assignment_id = %s
-            ORDER BY created_at DESC
-            LIMIT %s
-            """,
-            [assignment_id, limit],
-        )
-    else:
-        rows = db.execute(
-            """
-            SELECT * FROM review_queue
-            WHERE status = 'pending'
-            ORDER BY created_at DESC
-            LIMIT %s
-            """,
-            [limit],
-        )
-    return _serialize_rows(rows or [])
+    # Fallback: in-memory queue
+    pending = [
+        r for r in _MEMORY_QUEUE.values()
+        if r["status"] == "pending"
+        and (assignment_id is None or r["assignment_id"] == assignment_id)
+    ]
+    # Sort by created_at descending
+    pending.sort(key=lambda r: r["created_at"], reverse=True)
+    return pending[:limit]
 
 
 def get_review_by_id(review_id: str) -> Optional[Dict]:
     """Get a single review item by ID."""
+    # Try database first
     db = get_db()
-    if not db.available:
-        return None
+    if db.available:
+        try:
+            row = db.execute_one(
+                "SELECT * FROM review_queue WHERE id = %s",
+                [review_id],
+            )
+            if row:
+                return _serialize_row(row)
+        except Exception:
+            pass
 
-    row = db.execute_one(
-        "SELECT * FROM review_queue WHERE id = %s",
-        [review_id],
-    )
-    return _serialize_row(row) if row else None
+    # Fallback: in-memory
+    return _MEMORY_QUEUE.get(review_id)
 
 
 def set_teacher_override(
@@ -163,48 +223,75 @@ def set_teacher_override(
 
     The original auto_score is preserved for tracking system accuracy.
     """
+    # Try database first
     db = get_db()
-    if not db.available:
-        return None
+    if db.available:
+        try:
+            row = db.execute_one(
+                """
+                UPDATE review_queue
+                SET status = 'reviewed',
+                    teacher_score = %s,
+                    teacher_notes = %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                [teacher_score, teacher_notes, review_id],
+            )
+            if row:
+                return _serialize_row(row)
+        except Exception:
+            pass
 
-    row = db.execute_one(
-        """
-        UPDATE review_queue
-        SET status = 'reviewed',
-            teacher_score = %s,
-            teacher_notes = %s
-        WHERE id = %s
-        RETURNING *
-        """,
-        [teacher_score, teacher_notes, review_id],
-    )
-    return _serialize_row(row) if row else None
+    # Fallback: in-memory
+    if review_id in _MEMORY_QUEUE:
+        _MEMORY_QUEUE[review_id]["status"] = "reviewed"
+        _MEMORY_QUEUE[review_id]["teacher_score"] = teacher_score
+        _MEMORY_QUEUE[review_id]["teacher_notes"] = teacher_notes
+        return _MEMORY_QUEUE[review_id]
+    return None
 
 
 def get_queue_stats() -> Dict:
     """Summary statistics for the review queue."""
+    # Try database first
     db = get_db()
-    if not db.available:
-        return {"available": False}
+    if db.available:
+        try:
+            row = db.execute_one(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending')  AS pending,
+                    COUNT(*) FILTER (WHERE status = 'reviewed') AS reviewed,
+                    COUNT(*) AS total,
+                    AVG(ABS(auto_score - teacher_score))
+                        FILTER (WHERE teacher_score IS NOT NULL) AS avg_override_delta
+                FROM review_queue
+                """,
+            )
+            if row:
+                return {
+                    "available": True,
+                    "pending": row["pending"] if row else 0,
+                    "reviewed": row["reviewed"] if row else 0,
+                    "total": row["total"] if row else 0,
+                    "avg_override_delta": round(float(row["avg_override_delta"]), 2)
+                        if row and row["avg_override_delta"] is not None else None,
+                }
+        except Exception:
+            pass
 
-    row = db.execute_one(
-        """
-        SELECT
-            COUNT(*) FILTER (WHERE status = 'pending')  AS pending,
-            COUNT(*) FILTER (WHERE status = 'reviewed') AS reviewed,
-            COUNT(*) AS total,
-            AVG(ABS(auto_score - teacher_score))
-                FILTER (WHERE teacher_score IS NOT NULL) AS avg_override_delta
-        FROM review_queue
-        """,
-    )
+    # Fallback: in-memory stats
+    all_items = list(_MEMORY_QUEUE.values())
+    pending = sum(1 for r in all_items if r["status"] == "pending")
+    reviewed = sum(1 for r in all_items if r["status"] == "reviewed")
     return {
         "available": True,
-        "pending": row["pending"] if row else 0,
-        "reviewed": row["reviewed"] if row else 0,
-        "total": row["total"] if row else 0,
-        "avg_override_delta": round(float(row["avg_override_delta"]), 2)
-            if row and row["avg_override_delta"] is not None else None,
+        "source": "in-memory",
+        "pending": pending,
+        "reviewed": reviewed,
+        "total": len(all_items),
+        "avg_override_delta": None,
     }
 
 
@@ -225,6 +312,12 @@ def _serialize_row(row: Dict) -> Dict:
     for key in ["created_at"]:
         if key in result and result[key] is not None:
             result[key] = result[key].isoformat()
+    # Parse flag_reasons if stored as JSON string
+    if "flag_reasons" in result and isinstance(result["flag_reasons"], str):
+        try:
+            result["flag_reasons"] = json.loads(result["flag_reasons"])
+        except (json.JSONDecodeError, TypeError):
+            result["flag_reasons"] = []
     return result
 
 
