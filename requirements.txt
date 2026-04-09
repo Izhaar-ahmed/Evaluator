@@ -13,3 +13,4 @@ tree-sitter-python
 tree-sitter-cpp
 sentence-transformers
 numpy
+pypdf
