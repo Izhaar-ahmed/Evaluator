@@ -88,6 +88,32 @@ def _load_cached_embedding(rubric_id: str) -> Optional[np.ndarray]:
 
 
 # ---------------------------------------------------------------------------
+# Pairwise similarity
+# ---------------------------------------------------------------------------
+
+def compute_similarity(text_a: str, text_b: str) -> float:
+    """
+    Compute cosine similarity between two text strings.
+
+    Args:
+        text_a: First text.
+        text_b: Second text.
+
+    Returns:
+        Cosine similarity from 0.0 to 1.0. Returns 0.0 if service unavailable.
+    """
+    if not _ensure_model():
+        return 0.0
+
+    emb_a = _model.encode(text_a, normalize_embeddings=True)
+    emb_b = _model.encode(text_b, normalize_embeddings=True)
+
+    similarity = float(np.dot(emb_a, emb_b))
+    # Clamp to [0, 1] (cosine similarity with normalized vectors is [-1, 1])
+    return max(0.0, min(1.0, similarity))
+
+
+# ---------------------------------------------------------------------------
 # Scoring functions
 # ---------------------------------------------------------------------------
 
