@@ -5,8 +5,8 @@ Submits student code + test cases to the Judge0 CE API, compares output
 against expected values, and returns a pass rate (0–100).
 
 v2.1: Added local Python execution fallback when Judge0 is unavailable.
-      This runs student Python code in a sandboxed subprocess with
-      stdin/stdout redirection, so test cases ALWAYS affect the score.
+v2.2: Added local C++ execution fallback (g++) and C++ auto-wrapping
+      for LeetCode-style class Solution submissions.
 """
 
 import os
@@ -243,6 +243,82 @@ class Judge0Service:
                 pass
 
     # -----------------------------------------------------------------------
+    # Local execution fallback (C++)
+    # -----------------------------------------------------------------------
+
+    def _run_local_cpp(self, code: str, stdin: str, timeout: float = 10.0) -> Dict:
+        """
+        Compile and run C++ code locally using g++.
+
+        Args:
+            code: C++ source code (with includes and main).
+            stdin: Standard input string.
+            timeout: Max execution time in seconds.
+
+        Returns:
+            Dict with status, stdout, stderr (same shape as Judge0 response).
+        """
+        tmp_dir = tempfile.mkdtemp(prefix="evaluator_cpp_")
+        src_path = os.path.join(tmp_dir, "solution.cpp")
+        bin_path = os.path.join(tmp_dir, "solution")
+
+        try:
+            with open(src_path, 'w') as f:
+                f.write(code)
+
+            # Compile with g++
+            compile_result = subprocess.run(
+                ["g++", "-std=c++17", "-O2", "-o", bin_path, src_path],
+                capture_output=True, text=True, timeout=15,
+            )
+
+            if compile_result.returncode != 0:
+                return {
+                    "status": {"id": 6, "description": "Compilation Error"},
+                    "stdout": "",
+                    "stderr": compile_result.stderr[:500],
+                }
+
+            # Run the compiled binary
+            run_result = subprocess.run(
+                [bin_path],
+                input=stdin, capture_output=True, text=True, timeout=timeout,
+                env={"PATH": os.environ.get("PATH", ""), "HOME": tmp_dir},
+            )
+
+            if run_result.returncode == 0:
+                return {
+                    "status": {"id": 3, "description": "Accepted"},
+                    "stdout": base64.b64encode(run_result.stdout.encode()).decode(),
+                    "stderr": run_result.stderr or "",
+                }
+            else:
+                return {
+                    "status": {"id": 11, "description": "Runtime Error"},
+                    "stdout": base64.b64encode(run_result.stdout.encode()).decode() if run_result.stdout else "",
+                    "stderr": run_result.stderr or "",
+                }
+
+        except subprocess.TimeoutExpired:
+            return {
+                "status": {"id": 5, "description": "Time Limit Exceeded"},
+                "stdout": "", "stderr": "Execution timed out",
+            }
+        except FileNotFoundError:
+            return {
+                "status": {"id": -1, "description": "g++ not found. Install Xcode CLI tools: xcode-select --install"},
+                "stdout": "", "stderr": "g++ not found",
+            }
+        except Exception as e:
+            return {
+                "status": {"id": -1, "description": str(e)},
+                "stdout": "", "stderr": str(e),
+            }
+        finally:
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # -----------------------------------------------------------------------
     # Auto-wrapping for class-based solutions (LeetCode style)
     # -----------------------------------------------------------------------
 
@@ -352,6 +428,171 @@ print(_result)
 """
         return code + "\n" + wrapper
 
+    @staticmethod
+    def _wrap_cpp_class_solution(code: str) -> str:
+        """
+        Auto-wrap LeetCode-style C++ 'class Solution' code with includes and main().
+
+        Detects the first public method (not constructors/destructors) and generates
+        a main() that reads stdin (multi-line: first line = array, second line = scalar),
+        creates a Solution instance, calls the method, and prints the result.
+        """
+        import re as _re
+
+        if 'class Solution' not in code:
+            return code
+
+        # Extract the first public method signature
+        # Pattern: return_type method_name(params) {
+        method_match = _re.search(
+            r'(?:vector<[^>]+>|int|bool|string|double|float|long\s+long|void)\s+'
+            r'(\w+)\s*\(([^)]*)\)',
+            code
+        )
+        if not method_match:
+            return code
+
+        method_name = method_match.group(1)
+        params_str = method_match.group(2)
+
+        # Skip constructors/destructors
+        if method_name in ('Solution', '~Solution'):
+            return code
+
+        # Parse parameter types
+        params = []
+        for p in params_str.split(','):
+            p = p.strip()
+            if not p:
+                continue
+            params.append(p)
+
+        # Determine return type
+        ret_match = _re.search(
+            r'((?:vector<[^>]+>|int|bool|string|double|float|long\s+long|void))\s+'
+            + _re.escape(method_name),
+            code
+        )
+        return_type = ret_match.group(1) if ret_match else 'auto'
+
+        # Build stdin parsing + method call
+        read_lines = []
+        call_args = []
+        arg_idx = 0
+
+        for param in params:
+            arg_name = f'arg{arg_idx}'
+            if 'vector<int>' in param or 'vector<long' in param:
+                read_lines.append(f'    // Parse {param}')
+                read_lines.append(f'    string line{arg_idx};')
+                read_lines.append(f'    getline(cin, line{arg_idx});')
+                read_lines.append(f'    vector<int> {arg_name};')
+                read_lines.append(f'    {{')
+                read_lines.append(f'        stringstream ss(line{arg_idx});')
+                read_lines.append(f'        char c; int val;')
+                read_lines.append(f'        while(ss >> c) {{')
+                read_lines.append(f'            if(c == \'[\' || c == \',\' || c == \']\') {{')
+                read_lines.append(f'                if(ss >> val) {arg_name}.push_back(val);')
+                read_lines.append(f'            }} else {{')
+                read_lines.append(f'                ss.putback(c);')
+                read_lines.append(f'                if(ss >> val) {arg_name}.push_back(val);')
+                read_lines.append(f'            }}')
+                read_lines.append(f'        }}')
+                read_lines.append(f'    }}')
+                call_args.append(arg_name)
+            elif 'vector<string>' in param:
+                read_lines.append(f'    string line{arg_idx};')
+                read_lines.append(f'    getline(cin, line{arg_idx});')
+                read_lines.append(f'    vector<string> {arg_name};')
+                read_lines.append(f'    // simplified: treat as single string')
+                read_lines.append(f'    {arg_name}.push_back(line{arg_idx});')
+                call_args.append(arg_name)
+            elif 'int' in param or 'long' in param:
+                read_lines.append(f'    string line{arg_idx};')
+                read_lines.append(f'    getline(cin, line{arg_idx});')
+                read_lines.append(f'    int {arg_name} = stoi(line{arg_idx});')
+                call_args.append(arg_name)
+            elif 'string' in param:
+                read_lines.append(f'    string {arg_name};')
+                read_lines.append(f'    getline(cin, {arg_name});')
+                call_args.append(arg_name)
+            elif 'double' in param or 'float' in param:
+                read_lines.append(f'    string line{arg_idx};')
+                read_lines.append(f'    getline(cin, line{arg_idx});')
+                read_lines.append(f'    double {arg_name} = stod(line{arg_idx});')
+                call_args.append(arg_name)
+            elif 'bool' in param:
+                read_lines.append(f'    string line{arg_idx};')
+                read_lines.append(f'    getline(cin, line{arg_idx});')
+                read_lines.append(f'    bool {arg_name} = (line{arg_idx} == "true" || line{arg_idx} == "1");')
+                call_args.append(arg_name)
+            else:
+                read_lines.append(f'    // Unknown param type: {param}')
+                read_lines.append(f'    string {arg_name};')
+                read_lines.append(f'    getline(cin, {arg_name});')
+                call_args.append(arg_name)
+            arg_idx += 1
+
+        read_block = '\n'.join(read_lines)
+        call_str = ', '.join(call_args)
+
+        # Build print logic based on return type
+        if 'vector' in return_type:
+            print_block = '''    cout << "[";
+    for(int i = 0; i < (int)result.size(); i++) {
+        if(i > 0) cout << ",";
+        cout << result[i];
+    }
+    cout << "]" << endl;'''
+        elif return_type == 'bool':
+            print_block = '    cout << (result ? "true" : "false") << endl;'
+        elif return_type == 'string':
+            print_block = '    cout << "\\"" << result << "\\"" << endl;'
+        elif return_type == 'void':
+            print_block = '    // void return type'
+        else:
+            print_block = '    cout << result << endl;'
+
+        # Check what headers are already included
+        needs_headers = []
+        if '#include' not in code:
+            needs_headers = [
+                '#include <iostream>',
+                '#include <vector>',
+                '#include <string>',
+                '#include <sstream>',
+                '#include <unordered_map>',
+                '#include <unordered_set>',
+                '#include <algorithm>',
+                '#include <map>',
+                '#include <set>',
+                '#include <climits>',
+                'using namespace std;',
+            ]
+        else:
+            # Add any missing essentials
+            if '<sstream>' not in code:
+                needs_headers.append('#include <sstream>')
+            if 'using namespace std' not in code:
+                needs_headers.append('using namespace std;')
+
+        header_block = '\n'.join(needs_headers)
+
+        wrapper = f"""
+{header_block}
+
+{code}
+
+int main() {{
+{read_block}
+    Solution sol;
+    {return_type} result = sol.{method_name}({call_str});
+{print_block}
+    return 0;
+}}
+"""
+        return wrapper
+
     # -----------------------------------------------------------------------
     # Aggregate scoring
     # -----------------------------------------------------------------------
@@ -380,7 +621,9 @@ print(_result)
             return 0
 
         use_judge0 = self.available
-        use_local = (not use_judge0 and language == "python")
+        use_local_python = (not use_judge0 and language == "python")
+        use_local_cpp = (not use_judge0 and language == "cpp")
+        use_local = use_local_python or use_local_cpp
 
         if use_judge0:
             lang_id = self._get_language_id(language)
@@ -388,8 +631,8 @@ print(_result)
                 print(f"Judge0: unsupported language '{language}'")
                 return 0
         elif not use_local:
-            # Not Judge0, not Python — can't run tests
-            print(f"⚠ Cannot run {language} tests: Judge0 unavailable and local execution only supports Python.")
+            # Not Judge0, not Python/C++ — can't run tests
+            print(f"⚠ Cannot run {language} tests: Judge0 unavailable and local execution only supports Python and C++.")
             return 0
 
         passed = 0
@@ -400,11 +643,15 @@ print(_result)
 
             # Wrap class-based solutions for local execution
             exec_code = code
-            if use_local and 'class Solution' in code:
+            if use_local_python and 'class Solution' in code:
                 exec_code = self._wrap_class_solution(code, stdin)
+            elif (use_local_cpp or use_judge0) and language == 'cpp' and 'class Solution' in code:
+                exec_code = self._wrap_cpp_class_solution(code)
 
             if use_judge0:
                 result = self.run_test(exec_code, lang_id, stdin)
+            elif use_local_cpp:
+                result = self._run_local_cpp(exec_code, stdin)
             else:
                 result = self._run_local_python(exec_code, stdin)
 

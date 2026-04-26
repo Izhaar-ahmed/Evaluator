@@ -13,6 +13,10 @@
   <em>An end-to-end system for evaluating student code and content submissions using AST analysis, LLM reasoning, semantic embeddings, automated test execution, plagiarism detection, and real-time student performance tracking — all managed through a beautiful dark-mode teacher dashboard.</em>
 </p>
 
+<p align="center">
+  <strong>Built by</strong>: B Harsha Vardhan (23BDS015) · L Akash (23BDS031) · S Sasi Rekha (23BDS049) · SK Izhaar Ahmed (23BDS053)
+</p>
+
 ---
 
 ## 📖 Table of Contents
@@ -74,7 +78,7 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
 | Feature | What It Does | Technology Used |
 |---|---|---|
 | 🧠 **AST-Aware Scoring** | Understands code structure (loops, functions, nesting) | Tree-sitter |
-| 🧪 **Test Case Execution** | Runs student code against test inputs/outputs | Judge0 API + Local Python fallback |
+| 🧪 **Test Case Execution** | Runs student code against test inputs/outputs | Judge0 API + Local Python/C++ fallback |
 | 💬 **AI Feedback** | Generates personalized, learning-oriented comments | Google Gemini 2.0 Flash |
 | 🔍 **Relevance Checking** | Verifies submission actually answers the question | Gemini LLM |
 | 🕵️ **Plagiarism Detection** | Compares submissions using fingerprinting + similarity | SequenceMatcher + Fingerprinting |
@@ -546,25 +550,107 @@ Both `{"input", "output"}` and `{"stdin", "expected_output"}` formats are accept
 ```
 Test cases provided?
 ├── NO  → Skip test execution (static analysis only)
-└── YES → Is Judge0 reachable? (actual HTTP ping to /about endpoint)
+└── YES → Is it a "class Solution" pattern?
+          ├── YES (Python) → Auto-wrap with stdin parser + method caller
+          ├── YES (C++)    → Auto-wrap with #include headers + main() generator
+          └── NO           → Run code as-is
+          ↓
+          Is Judge0 reachable? (actual HTTP ping to /about endpoint)
           ├── YES → Submit to Judge0 API (sandboxed, supports all languages)
           └── NO  → Is the language Python?
-                    ├── YES → Run locally via subprocess
-                    │         └── Is it a "class Solution:" pattern?
-                    │             ├── YES → Auto-wrap with stdin parser + method caller
-                    │             └── NO  → Run as-is
-                    └── NO  → Skip test execution (log warning)
+                    ├── YES → Run locally via Python subprocess
+                    └── NO  → Is the language C++?
+                              ├── YES → Compile with g++ -std=c++17 and run locally
+                              └── NO  → Skip test execution (log warning)
 ```
+
+### C++ LeetCode Auto-Wrapping
+
+**Where**: `judge0_service.py` → `_wrap_cpp_class_solution()`
+
+Many students submit LeetCode-style C++ solutions as bare classes without `main()` or `#include` headers:
+
+```cpp
+class Solution {
+public:
+    vector<int> twoSum(vector<int>& nums, int target) {
+        // student code here...
+    }
+};
+```
+
+The system **automatically wraps** this with a complete executable program:
+
+1. **Prepends headers**: `<iostream>`, `<vector>`, `<unordered_map>`, `<sstream>`, `<algorithm>`, `<climits>`, etc.
+2. **Adds `using namespace std;`**
+3. **Parses the method signature** using regex to detect parameter types (`vector<int>`, `int`, `string`, `bool`, `double`)
+4. **Generates a `main()` function** that:
+   - Reads each parameter from stdin (line-by-line)
+   - Parses JSON arrays like `[-3,4,3,90]` into `vector<int>`
+   - Parses scalar values like `9` into `int`
+   - Creates a `Solution` instance and calls the detected method
+   - Prints the result in the expected format (e.g., `[0,2]` for vector results)
+
+**Example**: Given the input `[-3,4,3,90]\n0` and the class above, the wrapper generates:
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <sstream>
+#include <unordered_map>
+using namespace std;
+
+class Solution { /* student code */ };
+
+int main() {
+    string line0;
+    getline(cin, line0);
+    vector<int> arg0;
+    // ... parse JSON array from line0 ...
+    
+    string line1;
+    getline(cin, line1);
+    int arg1 = stoi(line1);
+    
+    Solution sol;
+    vector<int> result = sol.twoSum(arg0, arg1);
+    cout << "[";
+    for(int i = 0; i < (int)result.size(); i++) {
+        if(i > 0) cout << ",";
+        cout << result[i];
+    }
+    cout << "]" << endl;
+    return 0;
+}
+```
+
+This is analogous to how LeetCode itself tests your submissions — the auto-wrapper acts as the invisible test harness.
+
+### Local C++ Execution Fallback
+
+**Where**: `judge0_service.py` → `_run_local_cpp()`
+
+When Judge0 (Docker) is unavailable, C++ code is compiled and executed locally using the system's `g++` compiler:
+
+1. Wrapped code is written to a temporary `.cpp` file
+2. Compiled with `g++ -std=c++17 -O2`
+3. Binary is executed as a subprocess with stdin piped in
+4. stdout is captured, base64-encoded (matching Judge0 response format)
+5. All temporary files are cleaned up afterward
+6. Returns a Judge0-compatible response dict for unified handling downstream
+
+This means **C++ test cases work out of the box on any Mac or Linux machine** with `g++` installed — no Docker required.
 
 ### Self-Hosted Judge0
 
-For reliable, unlimited test execution, you can run Judge0 locally:
+For full language support and sandboxed execution, you can run Judge0 locally:
 
 ```bash
 # 1. Open Docker Desktop
 # 2. Run:
 docker-compose -f docker-compose.judge0.yml up -d
 # Judge0 will be available at http://localhost:2358
+# Note: The Judge0 image is ~3.3GB and may take several minutes to pull
 ```
 
 The `.env` file is already configured to point to `localhost:2358`.
@@ -979,8 +1065,10 @@ These metrics produce different complexity scores, which lead to different final
 ### Q: Do I need Judge0 for the system to work?
 
 **A:** No. Judge0 is **optional**. Without it:
-- Python test cases still run locally via subprocess
-- Non-Python test cases are skipped (only static analysis)
+- **Python** test cases still run locally via subprocess
+- **C++** test cases run locally via `g++ -std=c++17` compilation and execution
+- LeetCode-style `class Solution` submissions are automatically wrapped with headers and a `main()` function
+- Only Java/JavaScript test cases would be skipped (static analysis only)
 - The system still provides accurate scores based on AST analysis, LLM feedback, and structural metrics
 
 ### Q: What file types are supported?
@@ -1008,6 +1096,29 @@ These metrics produce different complexity scores, which lead to different final
 - Content: coverage (60%), alignment (25%), flow (8%), completeness (7%)
 
 You can customize weights by uploading a custom rubric JSON.
+
+---
+
+## 👥 Contributors
+
+| Name | Roll No. | Role | Key Contributions |
+|------|----------|------|-------------------|
+| **B Harsha Vardhan** | 23BDS015 | Frontend Development | Designed and built the entire Next.js 14 teacher dashboard — landing page, upload interface with drag-and-drop, results dashboard with expandable score cards, review queue with override functionality, and student profile pages with trend visualization. Implemented the Obsidian Dark design system with TailwindCSS. |
+| **L Akash** | 23BDS031 | Integration & Testing | Integrated the FastAPI backend with the Next.js frontend via REST API. Configured CORS middleware, implemented multipart file upload handling, and built the `FormData` → backend pipeline. Conducted extensive end-to-end testing, identified and resolved critical bugs including test case format parsing, C++ execution failures, and error propagation across the API boundary. |
+| **S Sasi Rekha** | 23BDS049 | Content & Mixed Evaluation | Developed the Content Evaluation Agent with five scoring dimensions (factual accuracy, coverage, alignment, flow, completeness). Implemented the semantic embedding pipeline using all-MiniLM-L6-v2, built the dual keyword/semantic concept hit-rate scoring system, and developed the mixed-mode agent that combines code and content evaluation for hybrid assignments. |
+| **SK Izhaar Ahmed** | 23BDS053 | Code Evaluation & Integrity | Built the Code Evaluation Agent with four scoring dimensions (approach, readability, structure, effort). Integrated Tree-sitter for AST analysis, developed the Judge0 execution service with C++ auto-wrapping and local g++ fallback, implemented the integrity service with MD5 plagiarism fingerprinting, fuzzy SequenceMatcher similarity, and GPT-2 perplexity-based AI content detection. |
+
+---
+
+## 📚 References
+
+1. Ala-Mutka, K. M. (2005). A survey of automated assessment approaches for programming assignments. *Computer Science Education*, 15(2), 83–102.
+2. Reimers, N., & Gurevych, I. (2019). Sentence-BERT: Sentence embeddings using Siamese BERT-networks. *EMNLP 2019*.
+3. Tree-sitter. (2024). Tree-sitter documentation. https://tree-sitter.github.io/tree-sitter/
+4. Judge0. (2024). Judge0 CE — open-source online code execution system. https://judge0.com/
+5. Radford, A., et al. (2019). Language models are unsupervised multitask learners. *OpenAI Technical Report*.
+6. Google DeepMind. (2024). Gemini: A family of highly capable multimodal models. *arXiv preprint*.
+7. Wang, W., et al. (2020). MiniLM: Deep self-attention distillation for task-agnostic compression. *NeurIPS 2020*.
 
 ---
 
