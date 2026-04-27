@@ -1,6 +1,7 @@
 import os
+import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 def read_file(file_path: str) -> Optional[str]:
@@ -68,6 +69,10 @@ def read_submissions_by_type(folder_path: str) -> Dict[str, Dict[str, str]]:
     """
     Read all submissions organized by file type.
 
+    For mixed evaluation, supports two modes:
+    1. Two files per student (e.g., student.py + student.txt) — classic split
+    2. Single file per student — auto-splits code and text content from one file
+
     Args:
         folder_path: Path to folder containing submissions
 
@@ -92,7 +97,257 @@ def read_submissions_by_type(folder_path: str) -> Dict[str, Dict[str, str]]:
                 elif file_path.suffix.lower() in [".txt", ".pdf"]:
                     result["text"][file_path.name] = content
 
+    # ── Auto-split single files for mixed evaluation ──
+    # If a student has code but no matching text (or vice versa), split their file
+    _auto_split_single_files(result)
+
     return result
+
+
+def _auto_split_single_files(result: Dict[str, Dict[str, str]]) -> None:
+    """
+    For students who submitted a single file, auto-split it into code + text.
+
+    Modifies result dict in-place. Checks if a student has a code file but
+    no matching text file (or vice versa), and splits the single file.
+    """
+    code_students = {
+        _stem(f): f for f in result["code"]
+    }
+    text_students = {
+        _stem(f): f for f in result["text"]
+    }
+
+    # Students with code but no text → split code file to extract prose
+    for stem, code_file in code_students.items():
+        if stem not in text_students:
+            content = result["code"][code_file]
+            code_part, text_part = split_mixed_content(content, code_file)
+            if text_part and len(text_part.strip()) > 20:
+                # Keep the full file as code (for AST analysis)
+                # Add extracted prose as a virtual .txt entry
+                virtual_txt = _stem(code_file) + ".txt"
+                result["text"][virtual_txt] = text_part
+                print(f"  ✓ Auto-split '{code_file}': extracted {len(text_part)} chars of prose content")
+
+    # Students with text but no code → split text file to extract code blocks
+    for stem, text_file in text_students.items():
+        if stem not in code_students:
+            content = result["text"][text_file]
+            code_part, text_part = split_mixed_content(content, text_file)
+            if code_part and len(code_part.strip()) > 20:
+                # Add extracted code as a virtual .py entry
+                virtual_py = _stem(text_file) + ".py"
+                result["code"][virtual_py] = code_part
+                # Update text to be only the prose portion
+                if text_part and len(text_part.strip()) > 20:
+                    result["text"][text_file] = text_part
+                print(f"  ✓ Auto-split '{text_file}': extracted {len(code_part)} chars of code")
+
+
+def _stem(filename: str) -> str:
+    """Get filename stem (without extension)."""
+    return Path(filename).stem
+
+
+def split_mixed_content(content: str, filename: str) -> Tuple[str, str]:
+    """
+    Split a single file into code and prose portions.
+
+    Handles three file types:
+    - Python (.py): Extracts docstrings + comment blocks as prose
+    - C++ (.cpp): Extracts block comments (/* */) + line comments (//) as prose
+    - Text (.txt): Extracts fenced code blocks (```) + indented blocks as code
+
+    Args:
+        content: Full file content
+        filename: Filename (used to determine file type)
+
+    Returns:
+        Tuple of (code_portion, text_portion)
+    """
+    ext = Path(filename).suffix.lower()
+
+    if ext in [".py"]:
+        return _split_python(content)
+    elif ext in [".cpp", ".cc", ".cxx", ".h", ".hpp"]:
+        return _split_cpp(content)
+    elif ext in [".txt", ".pdf"]:
+        return _split_text(content)
+    else:
+        return content, ""
+
+
+def _split_python(content: str) -> Tuple[str, str]:
+    """
+    Extract prose from a Python file.
+
+    Prose = docstrings (triple-quoted strings) + comment blocks (# lines).
+    Code = everything else.
+    """
+    prose_parts = []
+    code_lines = []
+    lines = content.split("\n")
+
+    in_docstring = False
+    docstring_delim = None
+    docstring_buffer = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Detect docstring start/end
+        if not in_docstring:
+            # Check for docstring start (triple quotes)
+            for delim in ['"""', "'''"]:
+                if delim in stripped:
+                    count = stripped.count(delim)
+                    if count >= 2:
+                        # Single-line docstring: """text"""
+                        match = re.search(r'(\"\"\"|\'\'\')(.*?)\1', stripped)
+                        if match:
+                            prose_parts.append(match.group(2).strip())
+                            code_lines.append(line)  # Keep in code too for AST
+                        break
+                    elif count == 1:
+                        # Multi-line docstring starts
+                        in_docstring = True
+                        docstring_delim = delim
+                        # Extract text after the opening delimiter
+                        after = stripped.split(delim, 1)[1] if delim in stripped else ""
+                        docstring_buffer = [after] if after else []
+                        code_lines.append(line)  # Keep in code for AST
+                        break
+            else:
+                # Regular line — check if it's a comment block
+                if stripped.startswith("#"):
+                    # Standalone comment (not inline)
+                    comment_text = stripped.lstrip("#").strip()
+                    if len(comment_text) > 10:  # Skip short markers like "# ---"
+                        prose_parts.append(comment_text)
+                    code_lines.append(line)
+                else:
+                    code_lines.append(line)
+        else:
+            # Inside a multi-line docstring
+            if docstring_delim in stripped:
+                # Docstring ends
+                before = stripped.split(docstring_delim, 1)[0]
+                docstring_buffer.append(before)
+                prose_parts.append("\n".join(docstring_buffer).strip())
+                docstring_buffer = []
+                in_docstring = False
+                docstring_delim = None
+                code_lines.append(line)  # Keep for AST
+            else:
+                docstring_buffer.append(stripped)
+                code_lines.append(line)  # Keep for AST
+
+        i += 1
+
+    # If docstring was never closed, flush buffer
+    if docstring_buffer:
+        prose_parts.append("\n".join(docstring_buffer).strip())
+
+    code_portion = "\n".join(code_lines)
+    text_portion = "\n\n".join(p for p in prose_parts if p)
+
+    return code_portion, text_portion
+
+
+def _split_cpp(content: str) -> Tuple[str, str]:
+    """
+    Extract prose from a C++ file.
+
+    Prose = block comments (/* ... */) + consecutive // comment lines.
+    Code = everything else.
+    """
+    prose_parts = []
+
+    # Extract block comments /* ... */
+    block_comments = re.findall(r'/\*\s*(.*?)\s*\*/', content, re.DOTALL)
+    for comment in block_comments:
+        cleaned = comment.strip()
+        if len(cleaned) > 15:  # Skip short pragmatic comments
+            prose_parts.append(cleaned)
+
+    # Extract consecutive // comment blocks (3+ lines of // comments = prose)
+    lines = content.split("\n")
+    comment_block = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("//"):
+            comment_text = stripped.lstrip("/").strip()
+            comment_block.append(comment_text)
+        else:
+            if len(comment_block) >= 3:
+                # 3+ consecutive comment lines = likely prose explanation
+                prose_parts.append("\n".join(comment_block))
+            comment_block = []
+
+    # Flush remaining
+    if len(comment_block) >= 3:
+        prose_parts.append("\n".join(comment_block))
+
+    text_portion = "\n\n".join(p for p in prose_parts if p)
+    return content, text_portion  # Keep full content as code for AST
+
+
+def _split_text(content: str) -> Tuple[str, str]:
+    """
+    Extract code from a text/markdown file.
+
+    Code = fenced code blocks (```...```) + indented blocks (4+ spaces).
+    Text = everything else.
+    """
+    code_parts = []
+    text_lines = []
+    lines = content.split("\n")
+
+    in_fenced_block = False
+    code_buffer = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            if not in_fenced_block:
+                # Start of fenced code block
+                in_fenced_block = True
+                code_buffer = []
+            else:
+                # End of fenced code block
+                in_fenced_block = False
+                if code_buffer:
+                    code_parts.append("\n".join(code_buffer))
+                code_buffer = []
+        elif in_fenced_block:
+            code_buffer.append(line)
+        else:
+            # Check for indented code block (4+ spaces or tab, after a blank line)
+            if (line.startswith("    ") or line.startswith("\t")) and len(stripped) > 0:
+                # Check if previous line was blank or also indented
+                if i > 0 and (not lines[i - 1].strip() or lines[i - 1].startswith("    ")):
+                    code_parts.append(stripped)
+                else:
+                    text_lines.append(line)
+            else:
+                text_lines.append(line)
+
+        i += 1
+
+    # Flush unclosed fenced block
+    if code_buffer:
+        code_parts.append("\n".join(code_buffer))
+
+    code_portion = "\n".join(code_parts)
+    text_portion = "\n".join(text_lines)
+
+    return code_portion, text_portion
 
 
 def _read_pdf(file_path: str) -> Optional[str]:
@@ -149,3 +404,4 @@ def get_student_name_from_filename(filename: str) -> str:
     """
     name_without_ext = Path(filename).stem
     return f"{name_without_ext}_Result"
+

@@ -7,9 +7,29 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Lazy import for local SLM fallback
+_local_slm_instance = None
+
+def _get_local_slm():
+    """Get the local SLM service (lazy singleton)."""
+    global _local_slm_instance
+    if _local_slm_instance is None:
+        try:
+            from utils.local_slm_service import LocalSLMService
+            _local_slm_instance = LocalSLMService()
+        except ImportError:
+            _local_slm_instance = False  # Mark as unavailable
+    return _local_slm_instance if _local_slm_instance is not False else None
+
 class LLMService:
     """
-    Service wrapper for Google's Gemini LLM.
+    Service wrapper for LLM-based semantic feedback.
+    
+    Priority chain:
+    1. Google Gemini API (cloud, fast, rate-limited)
+    2. Local Phi-3 Mini SLM (offline, free, slower)
+    3. Rule-based feedback (always works, no AI)
+    
     Role: Semantic Assistant ONLY. Does not assign scores.
     """
 
@@ -22,6 +42,7 @@ class LLMService:
         self._rate_limited = False  # Track if we're in a cooldown period
         self._consecutive_failures = 0
         self._max_failures_before_disable = 3  # Disable after 3 consecutive failures
+        self._use_local_slm = os.getenv("USE_LOCAL_SLM", "true").lower() == "true"
 
     def _ensure_setup(self):
         """Lazy initialization of the Gemini client."""
@@ -92,7 +113,20 @@ class LLMService:
             except Exception as e:
                 last_error = str(e)
                 continue
-                
+        
+        # ── Fallback to Local SLM ──
+        if self._use_local_slm:
+            local_slm = _get_local_slm()
+            if local_slm and local_slm.available:
+                print("⟳ Gemini failed → falling back to local Phi-3 SLM for feedback")
+                try:
+                    return local_slm.generate_semantic_feedback(
+                        context_type, submission_content, rubric_context,
+                        deterministic_findings, missing_concepts, relevance_status
+                    )
+                except Exception as e:
+                    print(f"⚠ Local SLM feedback also failed: {e}")
+
         print(f"WARNING: All LLM models failed. Last error: {last_error}. Falling back to rule-based feedback.")
         return []
 
@@ -260,7 +294,17 @@ Verdict: [RELEVANT/PARTIAL/IRRELEVANT/UNCERTAIN]
                     self.enabled = False
                 continue
         
-        # CRITICAL: If LLM fails, ALWAYS return UNCERTAIN — NEVER IRRELEVANT.
+        # ── Fallback to Local SLM ──
+        if self._use_local_slm:
+            local_slm = _get_local_slm()
+            if local_slm and local_slm.available:
+                print("⟳ Gemini failed → falling back to local Phi-3 SLM for relevance check")
+                try:
+                    return local_slm.check_relevance(problem_statement, submission_content, context_type)
+                except Exception as e:
+                    print(f"⚠ Local SLM relevance check also failed: {e}")
+
+        # CRITICAL: If ALL LLMs fail, ALWAYS return UNCERTAIN — NEVER IRRELEVANT.
         # Returning IRRELEVANT on failure would unfairly crush student scores.
         return "UNCERTAIN"
 
@@ -338,5 +382,15 @@ Verdict: [RELEVANT/PARTIAL/IRRELEVANT/UNCERTAIN]
             except Exception as e:
                 print(f"LLM Rubric Parsing failed: {e}")
                 continue
-                
+        
+        # ── Fallback to Local SLM ──
+        if self._use_local_slm:
+            local_slm = _get_local_slm()
+            if local_slm and local_slm.available:
+                print("⟳ Gemini failed → falling back to local Phi-3 SLM for rubric parsing")
+                try:
+                    return local_slm.parse_rubric_text(text)
+                except Exception as e:
+                    print(f"⚠ Local SLM rubric parsing also failed: {e}")
+
         return None
