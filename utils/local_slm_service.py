@@ -5,10 +5,18 @@ Provides the same interface as the Gemini LLM service but runs entirely offline
 using a quantized GGUF model. Zero API cost, zero rate limits, full privacy.
 
 Model: Phi-3-mini-4k-instruct (Q4_K_M quantization, ~2.2GB)
-Runtime: llama-cpp-python (CPU inference, ~5-15s per response on Apple Silicon)
+Runtime: llama-cpp-python with Apple Silicon Metal GPU acceleration
+
+Performance optimizations applied:
+- Metal GPU offload (all layers)
+- Large batch size for fast prompt processing
+- Compact prompts (small models need fewer instructions)
+- Aggressive input/output token limits
+- Flash attention enabled
 """
 
 import os
+import time
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
@@ -65,19 +73,35 @@ class LocalSLMService:
             print(f"⏳ Loading local SLM from {Path(self.model_path).name}...")
             self._model = Llama(
                 model_path=self.model_path,
-                n_ctx=2048,        # Context window (keep small for speed)
-                n_threads=4,       # CPU threads (for non-GPU ops)
+                n_ctx=1024,        # Smaller context = faster prefill
+                n_batch=512,       # Large batch = faster prompt processing
+                n_threads=6,       # Use more CPU threads for non-GPU ops
                 n_gpu_layers=-1,   # Offload ALL layers to Apple Silicon GPU (Metal)
+                flash_attn=True,   # Enable flash attention for speed
                 verbose=False,
             )
-            print(f"✓ Local SLM loaded: Phi-3 Mini (Q4_K_M)")
+            print(f"✓ Local SLM loaded: Phi-3 Mini (Q4_K_M, Metal GPU)")
             return True
         except Exception as e:
-            print(f"⚠ Local SLM: Failed to load model: {e}")
-            self._available = False
-            return False
+            # Retry without flash_attn if it fails
+            try:
+                from llama_cpp import Llama
+                self._model = Llama(
+                    model_path=self.model_path,
+                    n_ctx=1024,
+                    n_batch=512,
+                    n_threads=6,
+                    n_gpu_layers=-1,
+                    verbose=False,
+                )
+                print(f"✓ Local SLM loaded: Phi-3 Mini (Q4_K_M, Metal GPU, no flash_attn)")
+                return True
+            except Exception as e2:
+                print(f"⚠ Local SLM: Failed to load model: {e2}")
+                self._available = False
+                return False
 
-    def generate(self, prompt: str, max_tokens: int = 800) -> Optional[str]:
+    def generate(self, prompt: str, max_tokens: int = 250) -> Optional[str]:
         """
         Generate a response from the local model.
 
@@ -95,16 +119,24 @@ class LocalSLMService:
             # Phi-3 instruct format
             formatted = f"<|user|>\n{prompt}<|end|>\n<|assistant|>\n"
 
+            t0 = time.time()
             response = self._model(
                 formatted,
                 max_tokens=max_tokens,
-                temperature=0.3,       # Low temp for consistent evaluation
-                top_p=0.9,
-                stop=["<|end|>", "<|user|>"],
+                temperature=0.2,       # Very low temp = faster convergence
+                top_p=0.85,
+                top_k=30,              # Limit sampling pool for speed
+                repeat_penalty=1.1,    # Prevent repetitive output
+                stop=["<|end|>", "<|user|>", "\n\n\n"],
                 echo=False,
             )
+            elapsed = time.time() - t0
 
             text = response["choices"][0]["text"].strip()
+            tokens = response.get("usage", {}).get("completion_tokens", 0)
+            if tokens and elapsed > 0:
+                print(f"  ⚡ SLM: {tokens} tokens in {elapsed:.1f}s ({tokens/elapsed:.0f} tok/s)")
+
             return text if text else None
 
         except Exception as e:
@@ -122,17 +154,12 @@ class LocalSLMService:
 
         Returns: RELEVANT, PARTIAL, IRRELEVANT, or UNCERTAIN
         """
-        prompt = f"""You are evaluating if a student's {context_type} submission answers the assigned problem.
+        # Ultra-compact prompt — Phi-3 is smart enough
+        prompt = f"""Problem: {problem_statement[:300]}
+Submission: {submission_content[:500]}
+Is this {context_type} submission solving the problem? Reply ONE word: RELEVANT, PARTIAL, or IRRELEVANT."""
 
-Problem: {problem_statement[:800]}
-
-Submission (first 1500 chars):
-{submission_content[:1500]}
-
-Does this submission attempt to solve the assigned problem?
-Reply with ONLY one word: RELEVANT, PARTIAL, IRRELEVANT, or UNCERTAIN."""
-
-        result = self.generate(prompt, max_tokens=20)
+        result = self.generate(prompt, max_tokens=10)
         if not result:
             return "UNCERTAIN"
 
@@ -157,27 +184,22 @@ Reply with ONLY one word: RELEVANT, PARTIAL, IRRELEVANT, or UNCERTAIN."""
 
         Returns: List of feedback strings
         """
-        findings_str = "\n".join(f"- {f}" for f in deterministic_findings[:10])
-        missing_str = ", ".join(missing_concepts[:8]) if missing_concepts else "None"
+        # Take only top 5 findings and top 5 missing concepts
+        findings_str = "; ".join(deterministic_findings[:5])
+        missing_str = ", ".join(missing_concepts[:5]) if missing_concepts else "none"
 
-        prompt = f"""You are a helpful teaching assistant providing feedback on a student's {context_type} submission.
+        # Compact prompt — every token saved = faster inference
+        prompt = f"""Grade feedback for {context_type} submission.
+Findings: {findings_str}
+Missing: {missing_str}
+Code: {submission_content[:400]}
 
-Evaluation Findings:
-{findings_str}
+Write exactly:
+**Summary**: What the code does (1 line).
+**Corrections Needed**: 2-3 specific fixes with examples.
+**Strengths**: 2 bullet points."""
 
-Missing Concepts: {missing_str}
-
-Student Submission (excerpt):
-{submission_content[:1200]}
-
-Provide feedback in this EXACT format:
-**Summary**: One sentence about what the submission does.
-**Corrections Needed**: Specific, actionable improvements the student should make. Give examples.
-**Strengths**: 2-3 bullet points of what was done well.
-
-Be encouraging but precise. Do not assign scores."""
-
-        result = self.generate(prompt, max_tokens=600)
+        result = self.generate(prompt, max_tokens=250)
         if not result:
             return []
 
@@ -192,44 +214,15 @@ Be encouraging but precise. Do not assign scores."""
         """
         import json
 
-        prompt = f"""Convert this grading rubric description into a JSON object.
+        prompt = f"""Convert to JSON: {text[:400]}
+Output format: {{"name":"Rubric","dimensions":{{"code":{{"weight":0.6,"criteria":{{"approach":{{"weight":0.5}}}}}},"content":{{"weight":0.4,"criteria":{{"coverage":{{"weight":0.5}}}}}}}}}}
+Output ONLY valid JSON:"""
 
-Rubric Text:
-{text[:1000]}
-
-Output ONLY valid JSON matching this structure (no markdown, no explanation):
-{{
-  "name": "Custom Rubric",
-  "version": "1.0",
-  "dimensions": {{
-    "code": {{
-      "weight": 0.6,
-      "max_score": 100,
-      "criteria": {{
-        "approach": {{"weight": 0.4, "max_score": 100}},
-        "readability": {{"weight": 0.3, "max_score": 100}},
-        "structure": {{"weight": 0.3, "max_score": 100}}
-      }}
-    }},
-    "content": {{
-      "weight": 0.4,
-      "max_score": 100,
-      "criteria": {{
-        "coverage": {{"weight": 0.5, "max_score": 100}},
-        "alignment": {{"weight": 0.5, "max_score": 100}}
-      }}
-    }}
-  }}
-}}
-
-Adjust weights and criteria based on the rubric text. Output ONLY JSON."""
-
-        result = self.generate(prompt, max_tokens=500)
+        result = self.generate(prompt, max_tokens=200)
         if not result:
             return None
 
         try:
-            # Clean up any markdown
             json_str = result.strip()
             if json_str.startswith("```"):
                 json_str = json_str.split("\n", 1)[1] if "\n" in json_str else json_str[3:]
