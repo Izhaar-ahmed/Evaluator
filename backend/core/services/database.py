@@ -28,6 +28,19 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 SCHEMA_SQL = """
+-- Users table for authentication
+CREATE TABLE IF NOT EXISTS users (
+    id              TEXT PRIMARY KEY,
+    email           TEXT UNIQUE NOT NULL,
+    password_hash   TEXT NOT NULL,
+    role            TEXT NOT NULL CHECK (role IN ('teacher', 'student')),
+    student_id      TEXT,
+    display_name    TEXT,
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_student_id ON users(student_id);
+
 -- Submission index for plagiarism detection
 CREATE TABLE IF NOT EXISTS submission_index (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

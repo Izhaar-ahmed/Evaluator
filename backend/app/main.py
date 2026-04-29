@@ -27,6 +27,8 @@ print(f"LLM_ENABLED = {LLM_ENABLED}")
 from backend.app.routes import evaluate_router
 from backend.app.routes.review_routes import router as review_router
 from backend.app.routes.student_routes import router as student_router
+from backend.app.routes.auth_routes import router as auth_router
+from backend.app.routes.student_portal_routes import router as portal_router
 
 
 # ---------------------------------------------------------------------------
@@ -35,13 +37,42 @@ from backend.app.routes.student_routes import router as student_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database schema on startup."""
+    """Initialize database schema and seed default accounts on startup."""
     try:
         from backend.core.services.database import init_db
         init_db()
+        _seed_default_teacher()
     except Exception as e:
         print(f"⚠ Database initialization skipped: {e}")
     yield
+
+
+def _seed_default_teacher():
+    """Seed a default teacher account if none exists."""
+    try:
+        from backend.core.services.database import get_db
+        from backend.app.middleware.auth import hash_password
+        db = get_db()
+        if not db.available:
+            return
+        # Check if any teacher exists
+        existing = db.execute_one(
+            "SELECT id FROM users WHERE role = 'teacher' LIMIT 1"
+        )
+        if not existing:
+            db.execute(
+                """
+                INSERT INTO users (id, email, password_hash, role, display_name)
+                VALUES (%s, %s, %s, 'teacher', %s)
+                ON CONFLICT (email) DO NOTHING
+                """,
+                ["teacher-001", "teacher", hash_password("teacher"), "Instructor"],
+            )
+            print("✓ Default teacher account seeded (username: teacher, password: teacher)")
+        else:
+            print("✓ Teacher account already exists.")
+    except Exception as e:
+        print(f"⚠ Teacher seeding skipped: {e}")
 
 
 app = FastAPI(
@@ -108,9 +139,11 @@ async def root():
 
 
 # Include routers
+app.include_router(auth_router)
 app.include_router(evaluate_router)
 app.include_router(review_router)
 app.include_router(student_router)
+app.include_router(portal_router)
 
 
 if __name__ == "__main__":
