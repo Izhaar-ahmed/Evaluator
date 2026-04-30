@@ -23,7 +23,7 @@ export default function Navbar() {
             How It Works
           </a>
           <a
-            href="https://github.com/SasiRekhaSadanala/Evaluator"
+            href="https://github.com/Izhaar-ahmed/Evaluator"
             target="_blank"
             rel="noopener noreferrer"
             className="text-frost-muted text-sm font-medium hover:text-violet-primary transition-colors duration-300"

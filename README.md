@@ -6,13 +6,14 @@
   <img src="https://img.shields.io/badge/Gemini_AI-2.0-8E75B2?style=for-the-badge&logo=google&logoColor=white" />
   <img src="https://img.shields.io/badge/Ollama-Local_SLM-FF6B35?style=for-the-badge&logo=ollama&logoColor=white" />
   <img src="https://img.shields.io/badge/Phi--3_Mini-Offline-00D4AA?style=for-the-badge&logo=microsoft&logoColor=white" />
+  <img src="https://img.shields.io/badge/JWT-Auth-FB015B?style=for-the-badge&logo=jsonwebtokens&logoColor=white" />
 </p>
 
 <h1 align="center">🎓 Evaluator 2.0</h1>
 <h3 align="center">Intelligent AI-Powered Academic Assessment Platform</h3>
 
 <p align="center">
-  <em>An end-to-end system for evaluating student code and content submissions using AST analysis, LLM reasoning (cloud + offline), semantic embeddings, automated test execution, plagiarism detection, and real-time student performance tracking — with a multi-tier AI fallback chain (Gemini → Ollama Phi-3 → rule-based) and intelligent single-file mixed evaluation, all managed through a beautiful dark-mode teacher dashboard.</em>
+  <em>An end-to-end system for evaluating student code and content submissions using AST analysis, LLM reasoning (cloud + offline), semantic embeddings, automated test execution, plagiarism detection, and real-time student performance tracking — with a multi-tier AI fallback chain (Gemini → Ollama Phi-3 → rule-based) and intelligent single-file mixed evaluation, managed through role-based teacher and student dashboards with JWT authentication.</em>
 </p>
 
 <p align="center">
@@ -46,12 +47,14 @@
 11. [Review Queue: Human-in-the-Loop](#-review-queue-human-in-the-loop)
 12. [Student Profile Tracking](#-student-profile-tracking)
 13. [Frontend: The Teacher Dashboard](#-frontend-the-teacher-dashboard)
-14. [API Reference](#-api-reference)
-15. [Project Structure](#-project-structure)
-16. [How to Run](#-how-to-run)
-17. [Environment Variables](#-environment-variables)
-18. [Tech Stack](#-tech-stack)
-19. [Common Questions](#-common-questions)
+14. [Frontend: The Student Portal](#-frontend-the-student-portal)
+15. [Authentication & Role-Based Access](#-authentication--role-based-access)
+16. [API Reference](#-api-reference)
+17. [Project Structure](#-project-structure)
+18. [How to Run](#-how-to-run)
+19. [Environment Variables](#-environment-variables)
+20. [Tech Stack](#-tech-stack)
+21. [Common Questions](#-common-questions)
 
 ---
 
@@ -93,6 +96,8 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
 | 📈 **Student Tracking** | Performance history, trends, percentile ranking | PostgreSQL + NumPy |
 | 👨‍🏫 **Review Queue** | Teacher reviews flagged/uncertain submissions | In-memory + DB queue |
 | 🌙 **Dark-Mode Dashboard** | Beautiful, enterprise-grade teacher UI | Next.js 14 + Tailwind CSS |
+| 🎓 **Student Portal** | Personal dashboard, submissions, progress, leaderboard | JWT Auth + Role-based routing |
+| 🔐 **JWT Authentication** | Role-based access control (teacher/student) | PyJWT + SHA-256 |
 | 📄 **Single-File Mixed Eval** | One file with code + explanation → auto-split and evaluate both | Language-aware parser (Python/Text/PDF) |
 | 🔌 **Offline SLM** | Zero API cost, runs locally on Apple Silicon GPU | Ollama + Phi-3 Mini (Q4_K_M, 2.2GB) |
 
@@ -103,17 +108,25 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        FRONTEND (Next.js 14)                        │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────────┐   │
-│  │  Upload   │  │ Results  │  │  Review  │  │  Student Profile  │   │
-│  │   Page    │  │Dashboard │  │  Queue   │  │    Dashboard      │   │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────────┬──────────┘   │
-│       │              │             │                  │              │
-└───────┼──────────────┼─────────────┼──────────────────┼──────────────┘
+│                                                                     │
+│  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐ │
+│  │  Login  │  │  Upload  │  │ Results  │  │    Review Queue      │ │
+│  │  Page   │  │   Page   │  │Dashboard │  │                      │ │
+│  └────┬────┘  └────┬─────┘  └────┬─────┘  └────────┬─────────────┘ │
+│       │            │             │                  │               │
+│  ┌────▼────────────────────────────────────────────────────────────┐│
+│  │  STUDENT PORTAL                                                 ││
+│  │  ┌──────────┐ ┌────────────┐ ┌──────────┐ ┌──────────────────┐ ││
+│  │  │Dashboard │ │Submissions │ │ Progress │ │   Leaderboard    │ ││
+│  │  └──────────┘ └────────────┘ └──────────┘ └──────────────────┘ ││
+│  └────────────────────────────────────────────────────────────────┘│
+└───────┼──────────────┼─────────────┼──────────────────┼────────────┘
         │              │             │                  │
         ▼              ▼             ▼                  ▼
 ┌─────────────────────── REST API (FastAPI) ──────────────────────────┐
-│  POST /api/evaluate    GET /api/evaluations/history                  │
-│  GET  /api/reviews     POST /api/reviews/:id/override               │
+│  POST /api/auth/login      POST /api/evaluate                       │
+│  GET  /api/portal/*        GET  /api/evaluations/history            │
+│  GET  /api/reviews         POST /api/reviews/:id/override           │
 │  GET  /api/students/:id/profile                                     │
 └───────┬─────────────────────────────────────────────────────────────┘
         │
@@ -159,7 +172,7 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
 │  PostgreSQL          In-Memory Fallback        File System          │
 │  • evaluation_results  • review queue           • CSV exports       │
 │  • review_queue        • submission index       • embedding cache   │
-│  • student_scores                                                   │
+│  • student_scores      • users (auth)                               │
 │  • evaluation_batches                                               │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -910,6 +923,7 @@ Built with **Next.js 14**, **TailwindCSS**, and the **"Obsidian Scholar"** desig
 
 | Page | Path | Purpose |
 |---|---|---|
+| **Login** | `/login` | Role-based login (Student/Teacher toggle) |
 | **Upload** | `/upload` | Upload files, set problem statement, paste test cases |
 | **Results** | `/results` | Dashboard with all evaluation results, scores, feedback |
 | **Review Queue** | `/review` | Review flagged submissions, override scores |
@@ -926,19 +940,116 @@ The UI uses a custom design token system:
 
 ---
 
+## 🎓 Frontend: The Student Portal
+
+Students access their own dedicated portal at `/portal` after logging in. The portal uses the same **Obsidian Scholar** design system as the teacher dashboard, with glassmorphism cards and violet accent theming.
+
+### Student Pages
+
+| Page | Path | Purpose |
+|---|---|---|
+| **Dashboard** | `/portal` | Overview with GPA, percentile, recent submissions, skill breakdown, achievements |
+| **My Submissions** | `/portal/submissions` | Full history with expandable AI feedback and integrity status |
+| **Progress** | `/portal/progress` | Score trend chart, cumulative grade, topic-wise skill development |
+| **Leaderboard** | `/portal/leaderboard` | Anonymized class ranking — student sees own position highlighted |
+
+### Privacy Controls
+
+| Data | Student Access | How |
+|---|---|---|
+| Own scores & feedback | ✅ | Scoped by `student_id` in JWT |
+| Own history & trends | ✅ | Filtered via ID resolver |
+| Own class percentile | ✅ | Computed server-side |
+| Other students' names | ❌ | Shown as "Student #N" |
+| Other students' scores | ❌ | Only anonymized averages |
+| Integrity flag details | ❌ | Shows "Under Review" only |
+| Teacher features | ❌ | `require_student` dependency → 403 |
+
+### Dynamic Achievements
+
+Students earn achievement badges based on their performance:
+- **Top 10%** / **Top 25%** — class percentile ranking
+- **On the Rise** — improving trend detected
+- **Dedicated Submitter** — 10+ submissions completed
+- **Near Perfect Score** — scored 95+ on any submission
+
+---
+
+## 🔐 Authentication & Role-Based Access
+
+**Where**: `backend/app/middleware/auth.py` + `backend/app/routes/auth_routes.py`
+
+The system uses **JWT (JSON Web Token)** authentication with role-based access control.
+
+### How It Works
+
+```
+Login Request (POST /api/auth/login)
+├── Role: Teacher?
+│   └── Validates against seeded teacher account
+└── Role: Student?
+    └── Auto-creates account on first login (password = username)
+    ↓
+JWT Token Issued (24-hour expiry)
+├── Contains: username, role, student_id, display_name
+└── Stored in browser localStorage
+    ↓
+Subsequent API Requests
+├── Authorization: Bearer <token>
+├── Teacher routes → require_teacher dependency
+└── Student routes → require_student dependency (403 for teachers)
+```
+
+### Default Credentials
+
+| Role | Username | Password | Notes |
+|---|---|---|---|
+| Teacher | `teacher` | `teacher` | Auto-seeded on startup |
+| Student | any (e.g. `student_ravi`) | same as username | Auto-created on first login |
+
+### Student ID Resolution
+
+The evaluation pipeline stores student IDs with a `_Result` suffix (e.g., `student_ravi_Result`). The portal includes an automatic resolver that tries:
+1. Exact match → `student_ravi`
+2. With suffix → `student_ravi_Result`
+3. LIKE prefix → `student_ravi%`
+
+This ensures students see their data regardless of how their ID was stored during evaluation.
+
+---
+
 ## 📡 API Reference
 
-### Core Endpoints
+### Authentication Endpoints
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/api/evaluate` | Upload and evaluate submissions |
-| `GET` | `/api/evaluations/history` | Retrieve all past evaluation results |
-| `DELETE` | `/api/evaluations/cleanup?below_score=10` | Remove old broken evaluation results |
-| `GET` | `/api/reviews` | Get pending review queue items |
-| `POST` | `/api/reviews/{id}/override` | Teacher overrides a score |
-| `GET` | `/api/students/{id}/profile` | Get student's complete profile |
-| `GET` | `/health` | Health check with DB and LLM status |
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/auth/login` | None | Login with username/password, returns JWT |
+| `GET` | `/api/auth/me` | Bearer | Get current user info from token |
+
+### Core Endpoints (Teacher)
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/evaluate` | None* | Upload and evaluate submissions |
+| `GET` | `/api/evaluations/history` | None* | Retrieve all past evaluation results |
+| `DELETE` | `/api/evaluations/cleanup?below_score=10` | None* | Remove old broken evaluation results |
+| `GET` | `/api/reviews` | None* | Get pending review queue items |
+| `POST` | `/api/reviews/{id}/override` | None* | Teacher overrides a score |
+| `GET` | `/api/students/{id}/profile` | None* | Get student's complete profile |
+| `GET` | `/health` | None | Health check with DB and LLM status |
+
+*These endpoints currently don't enforce auth but are intended for teacher use only.
+
+### Student Portal Endpoints
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/portal/dashboard` | Student | Student's personal dashboard with stats |
+| `GET` | `/api/portal/submissions` | Student | All of student's evaluated submissions |
+| `GET` | `/api/portal/submissions/{id}` | Student | Single submission with full AI feedback |
+| `GET` | `/api/portal/progress` | Student | Score trends, skill breakdown, improvement |
+| `GET` | `/api/portal/leaderboard` | Student | Anonymized class ranking |
 
 ### POST /api/evaluate — Request Format
 
@@ -989,8 +1100,12 @@ Evaluator/
 │   ├── app/
 │   │   ├── main.py                    # FastAPI application entry point
 │   │   ├── config.py                  # Application configuration
+│   │   ├── middleware/
+│   │   │   └── auth.py                # JWT auth middleware + role-based dependencies
 │   │   ├── routes/
 │   │   │   ├── evaluate.py            # POST /api/evaluate (main endpoint)
+│   │   │   ├── auth_routes.py         # POST /api/auth/login, GET /api/auth/me
+│   │   │   ├── student_portal_routes.py # GET /api/portal/* (student-scoped endpoints)
 │   │   │   ├── review_routes.py       # GET/POST /api/reviews
 │   │   │   └── student_routes.py      # GET /api/students/:id/profile
 │   │   ├── schemas/
@@ -1028,15 +1143,23 @@ Evaluator/
 │   ├── app/
 │   │   ├── layout.tsx                 # Root layout with Obsidian theme
 │   │   ├── page.tsx                   # Landing page
+│   │   ├── login/page.tsx             # Role-based login page (Student/Teacher)
 │   │   ├── upload/page.tsx            # File upload interface
 │   │   ├── results/page.tsx           # Results dashboard
 │   │   ├── review/page.tsx            # Review queue page
-│   │   └── student/[id]/page.tsx      # Student profile page
+│   │   ├── student/[id]/page.tsx      # Student profile page (teacher view)
+│   │   └── portal/                    # Student portal (auth-protected)
+│   │       ├── page.tsx               # Student dashboard
+│   │       ├── submissions/page.tsx   # Student's submission history
+│   │       ├── progress/page.tsx      # Score trends and skill development
+│   │       └── leaderboard/page.tsx   # Anonymized class rankings
 │   ├── components/
-│   │   ├── AppNavbar.tsx              # Navigation bar
+│   │   ├── AppNavbar.tsx              # Teacher navigation bar with auth
+│   │   ├── StudentNavbar.tsx          # Student portal navigation bar
 │   │   └── FileUpload.tsx             # Drag-and-drop file upload component
 │   └── lib/
-│       └── results-store.ts           # Client-side results persistence
+│       ├── results-store.ts           # Client-side results persistence
+│       └── auth-store.ts             # JWT token management + authenticated requests
 │
 ├── utils/
 │   ├── llm_service.py                 # Multi-tier LLM (Gemini → Ollama → rule-based)
@@ -1161,13 +1284,21 @@ docker-compose -f docker-compose.judge0.yml up -d
 
 ### 9. Use the Application
 
-1. Open `http://localhost:3000` in your browser
-2. Click **Upload** in the navigation
-3. Select student files, enter the problem statement
-4. (Optional) Paste test cases JSON
-5. Click **Evaluate**
-6. View results on the **Results** page
-7. Check flagged submissions in the **Review Queue**
+**As a Teacher:**
+1. Open `http://localhost:3000` and click **Try Now**
+2. Log in with username `teacher`, password `teacher`
+3. Navigate to **Upload** to submit student files
+4. Enter the problem statement and (optionally) paste test cases JSON
+5. Click **Evaluate** and view results on the **Results** page
+6. Check flagged submissions in the **Review Queue**
+
+**As a Student:**
+1. Open `http://localhost:3000/login`
+2. Select **Student** role and log in (username = your student ID, password = same as username)
+3. View your **Dashboard** with GPA, percentile, and achievements
+4. Check **My Submissions** for detailed AI feedback
+5. Track your **Progress** over time
+6. See where you rank on the **Leaderboard**
 
 ---
 
@@ -1189,6 +1320,7 @@ docker-compose -f docker-compose.judge0.yml up -d
 | `DB_PASSWORD` | No | `postgres` | PostgreSQL password |
 | `JUDGE0_API_URL` | No | `http://localhost:2358` | Judge0 API URL |
 | `JUDGE0_API_KEY` | No | — | Judge0 API key (for RapidAPI hosted) |
+| `JWT_SECRET` | No | `evaluator-secret-key-change-in-production` | Secret key for JWT token signing |
 
 ---
 
@@ -1210,6 +1342,7 @@ docker-compose -f docker-compose.judge0.yml up -d
 | **PostgreSQL** | Persistent storage for results, reviews, and student data |
 | **psycopg2** | PostgreSQL adapter for Python |
 | **NumPy** | Numerical operations for embeddings and percentiles |
+| **PyJWT** | JSON Web Token authentication |
 | **Judge0 CE** | Sandboxed code execution engine |
 
 ### Frontend
