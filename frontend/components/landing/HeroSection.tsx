@@ -37,7 +37,7 @@ export default function HeroSection() {
         {/* CTA Buttons */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center items-center animate-slide-up stagger-3 opacity-0">
           <Link
-            href="/upload"
+            href="/login"
             className="px-8 py-4 rounded-full bg-violet-gradient text-white font-semibold text-base btn-glow transition-all duration-300 hover:scale-105 hover:shadow-violet-glow-lg"
           >
             Start Evaluating

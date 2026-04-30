@@ -17,7 +17,7 @@ export default function CTASection() {
               Join 40+ institutions automating their technical feedback loop.
             </p>
             <Link
-              href="/upload"
+              href="/login"
               className="inline-flex items-center gap-2 px-8 py-4 rounded-full bg-violet-gradient text-white font-semibold text-base btn-glow transition-all duration-300 hover:scale-105 hover:shadow-violet-glow-lg"
             >
               Get Started Free

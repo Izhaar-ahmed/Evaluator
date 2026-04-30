@@ -31,7 +31,7 @@ export default function Navbar() {
             GitHub
           </a>
           <Link
-            href="/upload"
+            href="/login"
             className="px-5 py-2.5 rounded-full bg-violet-gradient text-white text-sm font-semibold btn-glow transition-all duration-300 hover:scale-105"
           >
             Try Now
