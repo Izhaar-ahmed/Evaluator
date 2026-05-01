@@ -10,6 +10,7 @@ const studentLinks = [
   { href: '/portal/submissions', label: 'My Submissions', icon: 'assignment' },
   { href: '/portal/progress', label: 'Progress', icon: 'trending_up' },
   { href: '/portal/leaderboard', label: 'Leaderboard', icon: 'leaderboard' },
+  { href: '/portal/coach', label: 'AI Coach', icon: 'auto_awesome' },
 ]
 
 export default function StudentNavbar() {

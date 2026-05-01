@@ -29,6 +29,7 @@ from backend.app.routes.review_routes import router as review_router
 from backend.app.routes.student_routes import router as student_router
 from backend.app.routes.auth_routes import router as auth_router
 from backend.app.routes.student_portal_routes import router as portal_router
+from backend.app.routes.chat_routes import router as chat_router
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +145,7 @@ app.include_router(evaluate_router)
 app.include_router(review_router)
 app.include_router(student_router)
 app.include_router(portal_router)
+app.include_router(chat_router)
 
 
 if __name__ == "__main__":
