@@ -24,16 +24,14 @@ interface CoachStatus {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Suggested Prompts                                                  */
+/*  Suggested Prompts (just quick-start suggestions)                   */
 /* ------------------------------------------------------------------ */
 
 const SUGGESTED_PROMPTS = [
   { icon: 'trending_up', label: 'How can I improve my scores?', color: 'from-violet-500 to-violet-600' },
   { icon: 'psychology', label: 'What are my weakest areas?', color: 'from-amber-500 to-orange-500' },
-  { icon: 'calendar_month', label: 'Create a study plan for this week', color: 'from-emerald-500 to-emerald-600' },
-  { icon: 'rate_review', label: 'Explain my last feedback', color: 'from-cyan-500 to-blue-500' },
-  { icon: 'code', label: 'Tips to write better code', color: 'from-rose-500 to-pink-500' },
-  { icon: 'school', label: 'How do I get an A grade?', color: 'from-indigo-500 to-purple-500' },
+  { icon: 'code', label: 'Tips to write cleaner code', color: 'from-rose-500 to-pink-500' },
+  { icon: 'rate_review', label: 'Explain my last feedback in detail', color: 'from-cyan-500 to-blue-500' },
 ]
 
 /* ------------------------------------------------------------------ */
@@ -45,42 +43,58 @@ function renderMarkdown(text: string) {
   const elements: JSX.Element[] = []
 
   lines.forEach((line, i) => {
-    let content: JSX.Element | string = line
-
-    // Bold
-    const boldParts = line.split(/\*\*(.*?)\*\*/g)
-    if (boldParts.length > 1) {
-      content = (
-        <span key={`b-${i}`}>
-          {boldParts.map((part, j) =>
-            j % 2 === 1 ? <strong key={j} className="font-semibold text-frost">{part}</strong> : part
-          )}
-        </span>
-      )
-    }
-
-    // Inline code
-    if (typeof content === 'string') {
-      const codeParts = content.split(/`([^`]+)`/g)
-      if (codeParts.length > 1) {
-        content = (
-          <span key={`c-${i}`}>
-            {codeParts.map((part, j) =>
-              j % 2 === 1 ? (
-                <code key={j} className="px-1.5 py-0.5 bg-surface-container-highest/50 rounded text-violet-primary text-xs font-mono">{part}</code>
-              ) : part
+    // Process inline formatting
+    const processInline = (str: string, key: string): JSX.Element => {
+      // Bold
+      const parts = str.split(/\*\*(.*?)\*\*/g)
+      if (parts.length > 1) {
+        return (
+          <span key={key}>
+            {parts.map((part, j) =>
+              j % 2 === 1 ? <strong key={j} className="font-semibold text-frost">{part}</strong> : processCode(part, `${key}-c${j}`)
             )}
           </span>
         )
       }
+      return processCode(str, key)
+    }
+
+    const processCode = (str: string, key: string): JSX.Element => {
+      const codeParts = str.split(/`([^`]+)`/g)
+      if (codeParts.length > 1) {
+        return (
+          <span key={key}>
+            {codeParts.map((part, j) =>
+              j % 2 === 1 ? (
+                <code key={j} className="px-1.5 py-0.5 bg-surface-container-highest/50 rounded text-violet-primary text-xs font-mono">{part}</code>
+              ) : <span key={j}>{part}</span>
+            )}
+          </span>
+        )
+      }
+      return <span key={key}>{str}</span>
+    }
+
+    // Checkboxes (study plan items)
+    if (line.match(/^\s*-\s*\[\s*\]\s*/)) {
+      const content = line.replace(/^\s*-\s*\[\s*\]\s*/, '')
+      elements.push(
+        <div key={i} className="flex gap-2 ml-4 my-0.5">
+          <span className="text-violet-primary/50 mt-0.5">☐</span>
+          <span className="flex-1">{processInline(content, `cb-${i}`)}</span>
+        </div>
+      )
+      return
     }
 
     // Bullet points
-    if (line.startsWith('- ') || line.startsWith('• ')) {
+    if (line.match(/^\s*[-•]\s+/)) {
+      const content = line.replace(/^\s*[-•]\s+/, '')
+      const indent = line.match(/^(\s*)/)?.[1]?.length || 0
       elements.push(
-        <div key={i} className="flex gap-2 ml-2 my-0.5">
+        <div key={i} className="flex gap-2 my-0.5" style={{ marginLeft: `${Math.max(8, indent * 4)}px` }}>
           <span className="text-violet-primary mt-0.5 text-xs">•</span>
-          <span className="flex-1">{typeof content === 'string' ? content.slice(2) : content}</span>
+          <span className="flex-1">{processInline(content, `b-${i}`)}</span>
         </div>
       )
       return
@@ -89,10 +103,11 @@ function renderMarkdown(text: string) {
     // Numbered lists
     if (/^\d+\.\s/.test(line)) {
       const num = line.match(/^(\d+)\./)?.[1]
+      const content = line.replace(/^\d+\.\s/, '')
       elements.push(
         <div key={i} className="flex gap-2 ml-2 my-0.5">
           <span className="text-violet-primary text-xs font-mono w-4">{num}.</span>
-          <span className="flex-1">{typeof content === 'string' ? content.replace(/^\d+\.\s/, '') : content}</span>
+          <span className="flex-1">{processInline(content, `n-${i}`)}</span>
         </div>
       )
       return
@@ -104,7 +119,7 @@ function renderMarkdown(text: string) {
       return
     }
 
-    elements.push(<div key={i} className="my-0.5">{content}</div>)
+    elements.push(<div key={i} className="my-0.5">{processInline(line, `l-${i}`)}</div>)
   })
 
   return elements
@@ -121,6 +136,7 @@ export default function AICoachPage() {
   const [streaming, setStreaming] = useState(false)
   const [status, setStatus] = useState<CoachStatus | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
+  const [generatingPlan, setGeneratingPlan] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -132,7 +148,6 @@ export default function AICoachPage() {
       return
     }
 
-    // Check coach availability
     AuthStore.fetchAuth('http://127.0.0.1:8000/api/portal/chat/status')
       .then(r => r.json())
       .then(d => setStatus(d))
@@ -145,18 +160,8 @@ export default function AICoachPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Send message and stream response
-  const sendMessage = useCallback(async (text?: string) => {
-    const msg = (text || input).trim()
-    if (!msg || streaming) return
-
-    const userMsg: Message = {
-      id: `u-${Date.now()}`,
-      role: 'user',
-      content: msg,
-      timestamp: new Date(),
-    }
-
+  // Stream a response from an SSE endpoint
+  const streamResponse = useCallback(async (url: string, body: object | null, userMsg?: Message) => {
     const assistantMsg: Message = {
       id: `a-${Date.now()}`,
       role: 'assistant',
@@ -165,31 +170,37 @@ export default function AICoachPage() {
       streaming: true,
     }
 
-    setMessages(prev => [...prev, userMsg, assistantMsg])
-    setInput('')
+    if (userMsg) {
+      setMessages(prev => [...prev, userMsg, assistantMsg])
+    } else {
+      setMessages(prev => [...prev, assistantMsg])
+    }
     setStreaming(true)
 
     try {
       const token = AuthStore.getState().token
-      const conversationHistory = messages.slice(-6).map(m => ({
-        role: m.role,
-        content: m.content,
-      }))
-
-      const response = await fetch('http://127.0.0.1:8000/api/portal/chat', {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          message: msg,
-          conversation_history: conversationHistory,
-        }),
+        ...(body ? { body: JSON.stringify(body) } : {}),
       })
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
+        const errText = response.status === 503
+          ? '**Ollama is not running.** Start it with:\n\n`ollama serve`\n`ollama pull phi3:mini`\n\nThen refresh this page.'
+          : `_Connection error (HTTP ${response.status}). Is the backend running?_`
+        setMessages(prev => {
+          const updated = [...prev]
+          const last = updated[updated.length - 1]
+          if (last?.role === 'assistant') {
+            updated[updated.length - 1] = { ...last, streaming: false, content: errText }
+          }
+          return updated
+        })
+        return
       }
 
       const reader = response.body?.getReader()
@@ -217,7 +228,7 @@ export default function AICoachPage() {
                 setMessages(prev => {
                   const updated = [...prev]
                   const last = updated[updated.length - 1]
-                  if (last && last.role === 'assistant') {
+                  if (last?.role === 'assistant') {
                     updated[updated.length - 1] = { ...last, content: accumulated }
                   }
                   return updated
@@ -234,29 +245,79 @@ export default function AICoachPage() {
       setMessages(prev => {
         const updated = [...prev]
         const last = updated[updated.length - 1]
-        if (last && last.role === 'assistant') {
-          updated[updated.length - 1] = { ...last, streaming: false, content: accumulated || '_No response received. Is Ollama running?_' }
-        }
-        return updated
-      })
-    } catch (err) {
-      setMessages(prev => {
-        const updated = [...prev]
-        const last = updated[updated.length - 1]
-        if (last && last.role === 'assistant') {
+        if (last?.role === 'assistant') {
           updated[updated.length - 1] = {
             ...last,
             streaming: false,
-            content: '_Unable to connect to AI Coach. Make sure the backend is running and Ollama is active._',
+            content: accumulated || '_No response received. Is Ollama running?_',
+          }
+        }
+        return updated
+      })
+    } catch {
+      setMessages(prev => {
+        const updated = [...prev]
+        const last = updated[updated.length - 1]
+        if (last?.role === 'assistant') {
+          updated[updated.length - 1] = {
+            ...last,
+            streaming: false,
+            content: '**Cannot connect to AI Coach.** Make sure the backend is running:\n\n`python -m uvicorn backend.app.main:app`\n\nAnd Ollama is active:\n\n`ollama serve`',
           }
         }
         return updated
       })
     } finally {
       setStreaming(false)
+      setGeneratingPlan(false)
       inputRef.current?.focus()
     }
-  }, [input, streaming, messages])
+  }, [])
+
+  // Send a chat message
+  const sendMessage = useCallback(async (text?: string) => {
+    const msg = (text || input).trim()
+    if (!msg || streaming) return
+
+    const userMsg: Message = {
+      id: `u-${Date.now()}`,
+      role: 'user',
+      content: msg,
+      timestamp: new Date(),
+    }
+
+    setInput('')
+
+    const conversationHistory = messages.slice(-6).map(m => ({
+      role: m.role,
+      content: m.content,
+    }))
+
+    await streamResponse(
+      'http://127.0.0.1:8000/api/portal/chat',
+      { message: msg, conversation_history: conversationHistory },
+      userMsg,
+    )
+  }, [input, streaming, messages, streamResponse])
+
+  // Generate structured improvement plan
+  const generatePlan = useCallback(async () => {
+    if (streaming || generatingPlan) return
+    setGeneratingPlan(true)
+
+    const userMsg: Message = {
+      id: `u-${Date.now()}`,
+      role: 'user',
+      content: '📋 Generate my personalized improvement plan',
+      timestamp: new Date(),
+    }
+
+    await streamResponse(
+      'http://127.0.0.1:8000/api/portal/improvement-plan',
+      {},
+      userMsg,
+    )
+  }, [streaming, generatingPlan, streamResponse])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -284,31 +345,33 @@ export default function AICoachPage() {
                 <h1 className="text-lg font-bold text-frost">AI Study Coach</h1>
                 <div className="flex items-center gap-2">
                   {statusLoading ? (
-                    <span className="text-xs text-frost-muted">Checking availability...</span>
+                    <span className="text-xs text-frost-muted">Checking Ollama...</span>
                   ) : status?.available ? (
                     <>
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-trust animate-pulse" />
                       <span className="text-xs text-frost-muted">
-                        Powered by {status.backend === 'ollama' ? 'Phi-3 Mini (Local)' : 'Gemini AI'}
+                        Powered by Phi-3 Mini (Local · Private · Offline)
                       </span>
                     </>
                   ) : (
                     <>
                       <span className="w-1.5 h-1.5 rounded-full bg-coral" />
-                      <span className="text-xs text-coral">Offline — Start Ollama to enable</span>
+                      <span className="text-xs text-coral">Offline — run `ollama serve` to enable</span>
                     </>
                   )}
                 </div>
               </div>
             </div>
-            {messages.length > 0 && (
-              <button
-                onClick={() => setMessages([])}
-                className="text-xs text-frost-muted hover:text-frost transition-colors px-3 py-1.5 rounded-lg hover:bg-surface-container-low"
-              >
-                Clear Chat
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {messages.length > 0 && (
+                <button
+                  onClick={() => setMessages([])}
+                  className="text-xs text-frost-muted hover:text-frost transition-colors px-3 py-1.5 rounded-lg hover:bg-surface-container-low"
+                >
+                  Clear Chat
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -316,18 +379,38 @@ export default function AICoachPage() {
         <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6" style={{ maxHeight: 'calc(100vh - 250px)' }}>
           {messages.length === 0 ? (
             /* Welcome State */
-            <div className="flex flex-col items-center justify-center py-12 animate-fade-in">
+            <div className="flex flex-col items-center justify-center py-8 animate-fade-in">
               <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-violet-primary/20 to-violet-container/20 border border-violet-primary/10 flex items-center justify-center mb-6">
                 <span className="material-symbols-outlined text-4xl text-violet-primary">auto_awesome</span>
               </div>
               <h2 className="text-xl font-bold text-frost mb-2">
                 Hey {displayName}, I&apos;m your AI Study Coach
               </h2>
-              <p className="text-sm text-frost-muted max-w-md text-center mb-8">
-                I know your scores, feedback, and progress. Ask me anything about improving your performance — I&apos;ll give you personalized advice.
+              <p className="text-sm text-frost-muted max-w-md text-center mb-3">
+                I can answer <span className="text-violet-primary font-medium">any question</span> — academics, coding, career advice, or study strategies. I also know your scores and feedback for personalized guidance.
+              </p>
+              <p className="text-xs text-frost-muted/60 mb-8">
+                Runs 100% locally on your machine via Phi-3 Mini · No data leaves your device
               </p>
 
-              {/* Suggested prompts grid */}
+              {/* Generate Plan CTA */}
+              <button
+                onClick={generatePlan}
+                disabled={streaming || !status?.available}
+                className="group mb-8 w-full max-w-lg flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r from-violet-primary/10 to-violet-container/10 border border-violet-primary/20 hover:border-violet-primary/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-primary to-violet-container flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform shadow-lg">
+                  <span className="material-symbols-outlined text-white text-xl">assignment</span>
+                </div>
+                <div className="text-left">
+                  <p className="text-sm font-semibold text-frost">Generate My Improvement Plan</p>
+                  <p className="text-xs text-frost-muted">Get a structured, week-by-week study plan based on your actual scores and weak areas</p>
+                </div>
+                <span className="material-symbols-outlined text-violet-primary ml-auto text-lg">arrow_forward</span>
+              </button>
+
+              {/* Suggested prompts — quick starts, not the only options */}
+              <p className="text-xs text-frost-muted/50 uppercase tracking-wider font-medium mb-3">or ask anything</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg">
                 {SUGGESTED_PROMPTS.map((prompt, i) => (
                   <button
@@ -391,7 +474,11 @@ export default function AICoachPage() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={status?.available ? 'Ask your AI Coach anything...' : 'AI Coach is offline — start Ollama'}
+              placeholder={
+                status?.available
+                  ? 'Ask anything — coding help, study tips, career advice...'
+                  : 'Ollama offline — run: ollama serve'
+              }
               disabled={streaming || !status?.available}
               rows={1}
               className="w-full bg-transparent text-frost text-sm px-5 py-4 pr-14 resize-none outline-none placeholder:text-frost-muted/40 disabled:opacity-50 max-h-32 overflow-y-auto"
@@ -410,7 +497,7 @@ export default function AICoachPage() {
             </button>
           </div>
           <p className="text-[10px] text-frost-muted/40 text-center mt-2">
-            AI Coach uses your evaluation data to give personalized advice. Responses may not always be accurate.
+            Powered by Phi-3 Mini running locally · Your data never leaves your machine · Ask any question
           </p>
         </div>
       </div>

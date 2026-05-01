@@ -118,22 +118,24 @@ def _build_student_context(login_id: str) -> str:
     return "\n".join(lines)
 
 
-SYSTEM_PROMPT = """You are an AI Study Coach for a student in an academic evaluation platform called Evaluator 2.0.
+SYSTEM_PROMPT = """You are an AI Study Coach for a student in an academic evaluation platform called Evaluator 2.0. You run locally on the student's machine using Phi-3 Mini.
 
 Your role:
-- Provide personalized, actionable improvement advice based on the student's actual scores and feedback
-- Create structured study plans when asked
-- Explain evaluation feedback in simple terms
-- Identify weak areas and suggest specific resources/exercises
+- Answer ANY question the student asks — academic, coding, career, study strategies, or general knowledge
+- Provide personalized, actionable improvement advice based on the student's actual scores and feedback when relevant
+- Create detailed, structured study plans with day-by-day breakdowns when asked
+- Explain evaluation feedback in simple, encouraging terms
+- Identify weak areas and suggest specific exercises with concrete examples
+- Give coding tips with actual code snippets when helpful
 - Be encouraging but honest about areas needing improvement
-- Give concrete examples (e.g., "Your code readability scored low — try adding docstrings to every function")
 
 Rules:
-- Keep responses concise but helpful (2-4 paragraphs max unless creating a study plan)
+- You can answer ANY question — you are a general-purpose study assistant, not limited to specific topics
 - Use markdown formatting: **bold** for emphasis, bullet points for lists, `code` for code references
-- Reference the student's actual data when relevant (scores, topics, grades)
+- Reference the student's actual data when the question is about their performance
+- When creating study plans, use a clear day-by-day structure with checkboxes
 - Never reveal other students' data
-- If you don't have enough context, say so and suggest what the student can do
+- Keep responses focused and practical (2-4 paragraphs for general questions, longer for study plans)
 
 Student context:
 {context}
@@ -150,7 +152,7 @@ def _check_ollama() -> bool:
         return False
 
 
-def _stream_ollama(prompt: str, system: str):
+def _stream_ollama(prompt: str, system: str, max_tokens: int = 512):
     """Stream tokens from Ollama's /api/chat endpoint."""
     payload = json.dumps({
         "model": OLLAMA_MODEL,
@@ -160,7 +162,7 @@ def _stream_ollama(prompt: str, system: str):
         ],
         "stream": True,
         "options": {
-            "num_predict": 512,
+            "num_predict": max_tokens,
             "temperature": 0.6,
             "top_p": 0.9,
             "top_k": 40,
@@ -194,29 +196,6 @@ def _stream_ollama(prompt: str, system: str):
         yield f"\n\n_[Connection error: {e}]_"
 
 
-def _stream_gemini(prompt: str, system: str):
-    """Fallback: non-streaming Gemini response yielded in chunks."""
-    try:
-        import google.generativeai as genai
-        import os
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        if not api_key:
-            yield "_AI Coach is currently unavailable. Ollama is not running and no Gemini API key is configured._"
-            return
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(f"{system}\n\nUser: {prompt}")
-        text = response.text
-        # Simulate streaming by yielding word by word
-        words = text.split(" ")
-        for i, word in enumerate(words):
-            yield word + (" " if i < len(words) - 1 else "")
-            import time
-            time.sleep(0.02)
-    except Exception as e:
-        yield f"_AI Coach error: {e}_"
-
-
 # ---------------------------------------------------------------------------
 # SSE Streaming endpoint
 # ---------------------------------------------------------------------------
@@ -226,7 +205,7 @@ async def student_chat(
     body: ChatRequest,
     user: TokenPayload = Depends(require_student),
 ):
-    """Stream AI study coach response via Server-Sent Events."""
+    """Stream AI study coach response via Server-Sent Events (Ollama only)."""
     login_id = user.student_id
     if not login_id:
         raise HTTPException(400, "Student ID not found in token")
@@ -234,6 +213,13 @@ async def student_chat(
     message = body.message.strip()
     if not message:
         raise HTTPException(400, "Message cannot be empty")
+
+    if not _check_ollama():
+        raise HTTPException(
+            503,
+            "AI Coach requires Ollama to be running locally. "
+            "Start it with: ollama serve && ollama pull phi3:mini",
+        )
 
     # Build context from student data
     context = _build_student_context(login_id)
@@ -252,17 +238,94 @@ async def student_chat(
         history_text = message
 
     def event_stream():
-        use_ollama = _check_ollama()
-        if use_ollama:
-            gen = _stream_ollama(history_text, system)
-        else:
-            gen = _stream_gemini(history_text, system)
-
-        for token in gen:
-            # SSE format: data: <token>\n\n
-            escaped = token.replace("\n", "\\n")
+        for token in _stream_ollama(history_text, system):
             yield f"data: {json.dumps({'token': token})}\n\n"
+        yield f"data: {json.dumps({'done': True})}\n\n"
 
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Structured improvement plan (non-streaming)
+# ---------------------------------------------------------------------------
+
+IMPROVEMENT_PLAN_PROMPT = """Based on the student's evaluation data below, create a detailed, structured weekly improvement plan.
+
+Format the plan EXACTLY like this:
+
+**Improvement Plan for [Student Name]**
+**Current Status:** [Grade] | [GPA] | [Percentile]th percentile
+
+**Priority Areas (weakest → strongest):**
+1. [Topic] — current score: [X]/100
+2. [Topic] — current score: [X]/100
+
+**Week 1: Foundation Building**
+
+- Day 1-2: [Topic Focus]
+  - [ ] [Specific task with concrete example]
+  - [ ] [Specific task]
+  - [ ] Practice: [exercise description]
+
+- Day 3-4: [Topic Focus]
+  - [ ] [Specific task]
+  - [ ] [Specific task]
+
+- Day 5: Review & Self-Test
+  - [ ] Re-attempt weakest submission
+  - [ ] Compare with original feedback
+
+- Day 6-7: Rest + Light Review
+  - [ ] Read through corrected code
+  - [ ] Note 3 key learnings
+
+**Week 2: Skill Deepening**
+[Continue with similar structure]
+
+**Key Resources:**
+- [Specific resource/tutorial for weak area 1]
+- [Specific resource for weak area 2]
+
+**Target Goals:**
+- Raise [weak topic] from [X] to [Y] within 2 weeks
+- Achieve overall grade of [target]
+
+Student context:
+{context}
+"""
+
+
+@router.post("/improvement-plan")
+async def generate_improvement_plan(
+    user: TokenPayload = Depends(require_student),
+):
+    """Generate a structured improvement plan via Ollama (streamed)."""
+    login_id = user.student_id
+    if not login_id:
+        raise HTTPException(400, "Student ID not found in token")
+
+    if not _check_ollama():
+        raise HTTPException(503, "Ollama is not running. Start with: ollama serve")
+
+    context = _build_student_context(login_id)
+    prompt = IMPROVEMENT_PLAN_PROMPT.format(context=context)
+    system = "You are an expert academic coach. Create actionable, specific study plans. Use markdown formatting with checkboxes."
+
+    def event_stream():
+        for token in _stream_ollama(
+            "Generate my personalized improvement plan based on my data.",
+            system + "\n\n" + prompt,
+            max_tokens=1024,
+        ):
+            yield f"data: {json.dumps({'token': token})}\n\n"
         yield f"data: {json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(
@@ -278,13 +341,11 @@ async def student_chat(
 
 @router.get("/chat/status")
 def chat_status(user: TokenPayload = Depends(require_student)):
-    """Check if the AI coach backend is available."""
+    """Check if the AI coach backend (Ollama) is available."""
     ollama_ok = _check_ollama()
-    import os
-    gemini_ok = bool(os.getenv("GEMINI_API_KEY", ""))
 
     return {
-        "available": ollama_ok or gemini_ok,
-        "backend": "ollama" if ollama_ok else ("gemini" if gemini_ok else "none"),
-        "model": OLLAMA_MODEL if ollama_ok else "gemini-2.0-flash",
+        "available": ollama_ok,
+        "backend": "ollama" if ollama_ok else "none",
+        "model": OLLAMA_MODEL if ollama_ok else "unavailable",
     }
