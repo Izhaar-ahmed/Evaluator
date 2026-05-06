@@ -15,11 +15,12 @@ interface FileUploadProps {
 export interface FileUploadData {
   files: File[]
   problemStatement: string
-  assignmentType: 'code' | 'content' | 'mixed'
+  assignmentType: 'code' | 'content' | 'mixed' | 'transcript'
   rubric: string | null
   rubricSource: 'text' | 'file'
   topic: string
   testCases: string
+  transcriptText: string
 }
 
 export default function FileUpload({ onSubmit, onFileChange, loading }: FileUploadProps) {
@@ -29,9 +30,10 @@ export default function FileUpload({ onSubmit, onFileChange, loading }: FileUplo
   const rubricInputRef = useRef<HTMLInputElement>(null)
 
   const [problemStatement, setProblemStatement] = useState('')
-  const [assignmentType, setAssignmentType] = useState<'code' | 'content' | 'mixed'>('code')
+  const [assignmentType, setAssignmentType] = useState<'code' | 'content' | 'mixed' | 'transcript'>('code')
   const [topic, setTopic] = useState('')
   const [testCases, setTestCases] = useState('')
+  const [transcriptText, setTranscriptText] = useState('')
   const [rubricSource, setRubricSource] = useState<'text' | 'file'>('text')
   const [rubricText, setRubricText] = useState('')
   const [rubricFile, setRubricFile] = useState<File | null>(null)
@@ -60,16 +62,41 @@ export default function FileUpload({ onSubmit, onFileChange, loading }: FileUplo
     if (!selectedFiles) return
 
     const newFiles: File[] = []
-    const allowedExtensions = ['.py', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.txt', '.pdf']
+    const allowedExtensions = ['.py', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.txt', '.pdf', '.html', '.htm', '.zip']
 
     Array.from(selectedFiles).forEach((file) => {
       const ext = '.' + file.name.split('.').pop()?.toLowerCase()
-      if (allowedExtensions.includes(ext)) {
-        if (!files.some((f) => f.name === file.name)) {
-          newFiles.push(file)
-        }
-      } else {
+      if (!allowedExtensions.includes(ext)) {
         setErrors((prev) => [...prev, `Unsupported file type: ${file.name}`])
+        return
+      }
+
+      // For folder uploads: derive student name from webkitRelativePath
+      // e.g. "MLP Live Session/A Ananya_35470_assignsubmission_onlinetext/onlinetext.html"
+      //  → rename to "A Ananya_35470.html"
+      let finalFile = file
+      const relativePath = (file as any).webkitRelativePath as string | undefined
+
+      if (relativePath && relativePath.includes('/')) {
+        const parts = relativePath.split('/')
+        // Find the Moodle-style folder: "StudentName_ID_assignsubmission_onlinetext"
+        const studentFolder = parts.find(p => p.includes('_assignsubmission'))
+        if (studentFolder) {
+          const studentName = studentFolder.split('_assignsubmission')[0]
+          const newName = `${studentName}${ext}`
+          finalFile = new File([file], newName, { type: file.type })
+        } else if (parts.length >= 2) {
+          // Non-Moodle folder: use parent folder name
+          const parentFolder = parts[parts.length - 2]
+          const newName = `${parentFolder}_${file.name}`
+          finalFile = new File([file], newName, { type: file.type })
+        }
+      }
+
+      // Skip duplicates by name
+      if (!files.some((f) => f.name === finalFile.name) &&
+          !newFiles.some((f) => f.name === finalFile.name)) {
+        newFiles.push(finalFile)
       }
     })
 
@@ -132,6 +159,7 @@ export default function FileUpload({ onSubmit, onFileChange, loading }: FileUplo
         rubricSource,
         topic,
         testCases,
+        transcriptText,
       })
     }
   }
@@ -141,6 +169,7 @@ export default function FileUpload({ onSubmit, onFileChange, loading }: FileUplo
     setProblemStatement('')
     setTopic('')
     setTestCases('')
+    setTranscriptText('')
     setRubricText('')
     setRubricFile(null)
     setErrors([])
@@ -177,12 +206,15 @@ export default function FileUpload({ onSubmit, onFileChange, loading }: FileUplo
           />
 
           <ContextInputs
+            assignmentType={assignmentType}
             problemStatement={problemStatement}
             setProblemStatement={setProblemStatement}
             topic={topic}
             setTopic={setTopic}
             testCases={testCases}
             setTestCases={setTestCases}
+            transcriptText={transcriptText}
+            setTranscriptText={setTranscriptText}
             rubricSource={rubricSource}
             setRubricSource={setRubricSource}
             rubricText={rubricText}

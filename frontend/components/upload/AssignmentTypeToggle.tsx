@@ -3,14 +3,15 @@
 import React from 'react'
 
 interface AssignmentTypeToggleProps {
-  assignmentType: 'code' | 'content' | 'mixed'
-  setAssignmentType: (type: 'code' | 'content' | 'mixed') => void
+  assignmentType: 'code' | 'content' | 'mixed' | 'transcript'
+  setAssignmentType: (type: 'code' | 'content' | 'mixed' | 'transcript') => void
 }
 
 const typeInfo: Record<string, { icon: string; desc: string }> = {
   code: { icon: 'code', desc: 'Optimized for logic & syntax analysis' },
   content: { icon: 'article', desc: 'Concept & structural format analysis' },
   mixed: { icon: 'join_inner', desc: 'Comprehensive dual-mode evaluation' },
+  transcript: { icon: 'subtitles', desc: 'Score summaries against lecture transcripts' },
 }
 
 export const AssignmentTypeToggle: React.FC<AssignmentTypeToggleProps> = ({
@@ -24,7 +25,7 @@ export const AssignmentTypeToggle: React.FC<AssignmentTypeToggleProps> = ({
       </label>
 
       <div className="flex p-1 bg-surface-container-lowest rounded-lg w-fit border border-outline-variant/10">
-        {(['code', 'content', 'mixed'] as const).map((type) => (
+        {(['code', 'content', 'mixed', 'transcript'] as const).map((type) => (
           <button
             key={type}
             type="button"
