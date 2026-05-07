@@ -21,12 +21,19 @@ from ..utils.file_parser import (
     read_submissions_by_type,
 )
 from ..utils.rubric import Rubric
+from ..utils.vtt_parser import (
+    parse_vtt,
+    extract_concepts,
+    extract_concept_dict,
+    score_summary_against_concepts,
+    strip_html,
+)
 
 
 class Orchestrator:
     """Orchestrates evaluation workflow across student submissions."""
 
-    ASSIGNMENT_TYPES = {"code", "content", "mixed"}
+    ASSIGNMENT_TYPES = {"code", "content", "mixed", "transcript"}
 
     def __init__(self, rubric: Optional[Rubric] = None):
         self.rubric = rubric or Rubric()
@@ -42,17 +49,19 @@ class Orchestrator:
         ideal_reference: Optional[str] = None,
         assignment_id: Optional[str] = None,
         topic_tag: Optional[str] = None,
+        transcript_text: Optional[str] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """
         Evaluate all submissions in a folder.
 
         Args:
-            assignment_type: 'code', 'content', or 'mixed'
+            assignment_type: 'code', 'content', 'mixed', or 'transcript'
             folder_path: Path to folder containing student submissions
             problem_statement: For code assignments
             ideal_reference: For content assignments
             assignment_id: Unique assignment ID (for integrity + tracking)
             topic_tag: Topic tag for student progress tracking
+            transcript_text: Raw VTT transcript (for transcript assignments)
 
         Returns:
             Dictionary mapping student names to final evaluation results
@@ -90,6 +99,10 @@ class Orchestrator:
         elif assignment_type == "mixed":
             results = self._evaluate_mixed_submissions(
                 submissions, problem_statement, ideal_reference, assignment_id, test_cases
+            )
+        elif assignment_type == "transcript":
+            results = self._evaluate_transcript_submissions(
+                submissions, transcript_text or "", assignment_id
             )
 
         # ── Post-evaluation: student tracking + percentiles ──
@@ -309,6 +322,183 @@ class Orchestrator:
                 self._maybe_queue(student_name, assignment_id, result_entry)
 
                 results[student_name] = result_entry
+
+        return results
+
+    # ======================================================================
+    # TRANSCRIPT SUMMARY SUBMISSIONS
+    # ======================================================================
+
+    def _evaluate_transcript_submissions(
+        self,
+        submissions: Dict[str, str],
+        transcript_text: str,
+        assignment_id: str = "",
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Evaluate student summaries against a lecture transcript.
+
+        OPTIMIZED: Uses batch encoding to score all students at once.
+        - Concepts encoded ONCE
+        - All student sentences encoded in ONE batch call
+        - 10-20x faster than one-by-one scoring
+
+        Args:
+            submissions: Dict of filename → content.
+            transcript_text: Raw VTT transcript text.
+            assignment_id: Unique assignment identifier.
+
+        Returns:
+            Dictionary mapping student names to evaluation results.
+        """
+        import time
+        start_time = time.time()
+
+        # Phase 1: Parse transcript and extract concepts (ONE TIME)
+        clean_transcript = parse_vtt(transcript_text) if transcript_text.strip() else ""
+
+        if not clean_transcript or len(clean_transcript) < 100:
+            print("⚠ Transcript too short or empty. Cannot evaluate summaries.")
+            results = {}
+            for filename, content in submissions.items():
+                student_name = get_student_name_from_filename(filename)
+                results[student_name] = {
+                    "file": filename,
+                    "assignment_type": "transcript",
+                    "final_score": 0,
+                    "max_score": 100,
+                    "combined_feedback": [
+                        "⚠ Transcript was too short or empty to evaluate against."
+                    ],
+                }
+            return results
+
+        concepts = extract_concepts(clean_transcript, top_n=10)
+
+        transcript_word_count = len(clean_transcript.split())
+        print(f"✓ Parsed transcript: {transcript_word_count} words")
+        print(f"✓ Extracted {len(concepts)} key concepts: {concepts[:10]}...")
+
+        # Phase 2: Pre-process ALL submissions (strip HTML, map to student names)
+        cleaned_summaries = {}  # student_name -> cleaned text
+        filename_map = {}       # student_name -> filename
+
+        for filename, raw_content in submissions.items():
+            student_name = get_student_name_from_filename(filename)
+            content = raw_content
+            if "<html" in content.lower() or "<!doctype" in content.lower() or "<p>" in content.lower():
+                content = strip_html(content)
+            cleaned_summaries[student_name] = content
+            filename_map[student_name] = filename
+
+        print(f"✓ Pre-processed {len(cleaned_summaries)} submissions")
+
+        # Phase 3: BATCH score all summaries at once (FAST!)
+        from backend.core.utils.vtt_parser import batch_score_summaries
+        all_scores = batch_score_summaries(cleaned_summaries, concepts, clean_transcript)
+
+        elapsed = time.time() - start_time
+        print(f"✓ Scored {len(all_scores)} summaries in {elapsed:.1f}s ({elapsed/len(all_scores):.2f}s per student)")
+
+        # Phase 4: Build feedback for each student
+        results = {}
+        for student_name, scoring in all_scores.items():
+            filename = filename_map.get(student_name, "")
+            score = scoring["total_score"]
+            matched = scoring["matched_concepts"]
+            missing = scoring["missing_concepts"]
+            word_count = scoring["word_count"]
+            coverage = scoring["concept_coverage"]
+            depth = scoring["depth_score"]
+            expression = scoring.get("expression_score", 60)
+
+            feedback = []
+            score_10 = round(score / 10, 1)
+
+            # ── Overall Assessment ──
+            if score_10 >= 8.5:
+                feedback.append(f"🏆 **Excellent Work** — Score: {score_10}/10")
+                feedback.append("Outstanding summary that demonstrates a thorough understanding of the lecture material. Well done!")
+            elif score_10 >= 7.0:
+                feedback.append(f"✅ **Good Summary** — Score: {score_10}/10")
+                feedback.append("You've captured the key ideas from the lecture effectively. A few more details would make this even stronger.")
+            elif score_10 >= 5.5:
+                feedback.append(f"📝 **Adequate Summary** — Score: {score_10}/10")
+                feedback.append("Your summary covers some important points, but misses several key topics discussed in the lecture.")
+            elif score_10 >= 4.0:
+                feedback.append(f"⚠️ **Needs Improvement** — Score: {score_10}/10")
+                feedback.append("The summary is quite brief and doesn't reflect most of what was taught. Please revisit the lecture content.")
+            else:
+                feedback.append(f"❌ **Insufficient** — Score: {score_10}/10")
+                feedback.append("This submission does not adequately reflect the lecture content. Please rewrite with more detail.")
+
+            # ── Strengths ──
+            strengths = []
+            if len(matched) >= len(concepts) * 0.6:
+                strengths.append(f"covered {len(matched)} out of {len(concepts)} key topics")
+            if depth >= 70:
+                strengths.append("explained concepts clearly, not just listed them")
+            if 80 <= word_count <= 150:
+                strengths.append("well-structured and appropriately detailed")
+            if expression >= 70:
+                strengths.append("clear and well-written")
+
+            if strengths:
+                feedback.append(f"**💪 Strengths**: {'; '.join(strengths).capitalize()}.")
+
+            # ── Topics Covered ──
+            if matched:
+                feedback.append(f"**📋 Topics Covered** ({len(matched)}/{len(concepts)}): {', '.join(matched[:10])}")
+
+            # ── Areas to Improve ──
+            improvements = []
+            if missing:
+                top_missing = missing[:5]
+                improvements.append(f"Include these missing topics: **{', '.join(top_missing)}**")
+
+            if depth < 50:
+                improvements.append("Don't just list topics — explain *what* each concept means and *why* it matters")
+            elif depth < 70:
+                improvements.append("Try connecting concepts together (e.g., \"We used StandardScaler *before* training because...\")")
+
+            if word_count < 50:
+                improvements.append(f"Your summary is too short ({word_count} words). Aim for 80-120 words with meaningful content")
+            elif word_count > 200:
+                improvements.append(f"Your summary is too long ({word_count} words). Focus on the most important concepts in 100-120 words")
+
+            if expression < 50:
+                improvements.append("Use complete sentences with proper punctuation for better readability")
+
+            if improvements:
+                feedback.append("**🎯 How to Improve**:")
+                for imp in improvements:
+                    feedback.append(f"  → {imp}")
+
+            result_entry = {
+                "file": filename,
+                "assignment_type": "transcript",
+                "final_score": round(score / 10, 1),
+                "max_score": 10,
+                "combined_feedback": feedback,
+                "concept_coverage": coverage,
+                "matched_concepts": len(matched),
+                "total_concepts": len(concepts),
+                "word_count": word_count,
+                "summary_text": cleaned_summaries.get(student_name, ""),
+            }
+
+            # Integrity check
+            integrity = self._run_integrity_check(
+                "", assignment_id, student_name, text_content=cleaned_summaries.get(student_name, "")
+            )
+            if integrity:
+                result_entry["flag_score"] = integrity["flag_score"]
+                result_entry["flag_reasons"] = integrity["reasons"]
+
+            # Review queue
+            self._maybe_queue(student_name, assignment_id, result_entry)
+
+            results[student_name] = result_entry
 
         return results
 

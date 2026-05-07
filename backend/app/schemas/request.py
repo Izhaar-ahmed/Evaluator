@@ -89,8 +89,8 @@ class EvaluationRequest(BaseModel):
 
     assignment_type: str = Field(
         ...,
-        description="Type of assignment: 'code', 'content', or 'mixed'",
-        pattern="^(code|content|mixed)$",
+        description="Type of assignment: 'code', 'content', 'mixed', or 'transcript'",
+        pattern="^(code|content|mixed|transcript)$",
     )
     submission_folder: str = Field(
         ..., description="Path to folder containing student submissions"
@@ -100,6 +100,9 @@ class EvaluationRequest(BaseModel):
     )
     ideal_reference: Optional[str] = Field(
         default=None, description="Reference content (for content assignments)"
+    )
+    transcript_text: Optional[str] = Field(
+        default=None, description="VTT transcript text (for transcript summary assignments)"
     )
     rubric: Optional[RubricConfig] = Field(
         default=None,
