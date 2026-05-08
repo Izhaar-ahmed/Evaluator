@@ -46,6 +46,7 @@ class EvaluatorService:
                 problem_statement=request.problem_statement,
                 ideal_reference=request.ideal_reference,
                 topic_tag=getattr(request, 'topic_tag', None),
+                transcript_text=getattr(request, 'transcript_text', None),
             )
 
             # Convert results
@@ -133,10 +134,9 @@ class EvaluatorService:
 
         for student_name, result in raw_results.items():
             final_score = result.get("final_score", 0)
-            max_score = result.get("max_score", 100)
-            percentage = (
-                (final_score / max_score * 100) if max_score > 0 else 0
-            )
+            max_score = result.get("max_score", 10)
+            # Score is already /10 — use directly as the display value
+            percentage = final_score
 
             # Extract feedback - handle both list and combined_feedback formats
             feedback = result.get("combined_feedback", [])
