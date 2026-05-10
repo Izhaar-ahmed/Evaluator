@@ -11,7 +11,36 @@ export default function ResultsPage() {
   const [results, setResults] = useState<EvaluationResult[]>([])
   const [latestCsv, setLatestCsv] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [clearConfirm, setClearConfirm] = useState(false)
+  const [clearing, setClearing] = useState(false)
 
+  const handleClearAll = async () => {
+    if (!clearConfirm) {
+      setClearConfirm(true)
+      setTimeout(() => setClearConfirm(false), 4000) // Reset after 4s
+      return
+    }
+    setClearing(true)
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/evaluations/clear-all?confirm=true', {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        // Clear ALL session/local storage
+        ResultsStore.clearResults()
+        sessionStorage.removeItem('evaluation_results')
+        sessionStorage.removeItem('evaluationResults')
+        sessionStorage.clear()
+        setResults([])
+        setLatestCsv(null)
+        setClearConfirm(false)
+      }
+    } catch (e) {
+      console.error('Clear failed:', e)
+    } finally {
+      setClearing(false)
+    }
+  }
   useEffect(() => {
     const load = async () => {
       try {
@@ -51,8 +80,8 @@ export default function ResultsPage() {
       ? results.reduce((sum, r) => sum + r.percentage, 0) / results.length
       : 0
 
-  const totalIntegrityFlags =
-    results.reduce((count, r) => count + (r.flag_reasons?.length || 0), 0)
+  const flaggedStudents =
+    results.filter(r => (r.flag_reasons?.length || 0) > 0).length
 
   const uniqueStudents = new Set(results.map(r => r.submission_id)).size
 
@@ -86,6 +115,20 @@ export default function ResultsPage() {
           </div>
           {results.length > 0 && (
             <div className="flex gap-3">
+              <button
+                onClick={handleClearAll}
+                disabled={clearing}
+                className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-all flex items-center gap-2 ${
+                  clearConfirm
+                    ? 'bg-coral text-white animate-pulse'
+                    : 'bg-surface-container-high border border-outline-variant/20 text-frost-muted hover:text-coral hover:border-coral/30'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[18px]">
+                  {clearing ? 'progress_activity' : 'delete_sweep'}
+                </span>
+                {clearing ? 'Clearing...' : clearConfirm ? 'Click to Confirm' : 'Clear All'}
+              </button>
               <Link
                 href="/upload"
                 className="px-5 py-2.5 bg-surface-container-high border border-outline-variant/20 text-sm font-medium text-frost rounded-lg hover:bg-surface-container-highest transition-all"
@@ -115,10 +158,10 @@ export default function ResultsPage() {
                 <p className="text-xs font-semibold uppercase tracking-wider text-frost-muted mb-3">Average Score</p>
                 <div className="flex items-baseline gap-1">
                   <span className="text-4xl font-bold font-mono text-violet-primary">{averagePercentage.toFixed(1)}</span>
-                  <span className="text-lg text-frost-muted">/100</span>
+                  <span className="text-lg text-frost-muted">/10</span>
                 </div>
                 <div className="mt-4 h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-violet-primary to-violet-container rounded-full transition-all duration-500" style={{ width: `${averagePercentage}%` }} />
+                  <div className="h-full bg-gradient-to-r from-violet-primary to-violet-container rounded-full transition-all duration-500" style={{ width: `${averagePercentage * 10}%` }} />
                 </div>
               </div>
 
@@ -133,14 +176,15 @@ export default function ResultsPage() {
 
               {/* Integrity Alerts */}
               <div className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6 hover:border-outline-variant/20 transition-all">
-                <p className="text-xs font-semibold uppercase tracking-wider text-frost-muted mb-3">Integrity Alerts</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-frost-muted mb-3">Flagged Students</p>
                 <div className="flex items-baseline gap-1">
-                  <span className={`text-4xl font-bold font-mono ${totalIntegrityFlags > 0 ? 'text-coral' : 'text-emerald-trust'}`}>
-                    {totalIntegrityFlags}
+                  <span className={`text-4xl font-bold font-mono ${flaggedStudents > 0 ? 'text-coral' : 'text-emerald-trust'}`}>
+                    {flaggedStudents}
                   </span>
+                  <span className="text-lg text-frost-muted">/ {results.length}</span>
                 </div>
                 <p className="mt-3 text-xs text-frost-muted">
-                  {totalIntegrityFlags === 0 ? 'No concerns detected' : `${totalIntegrityFlags} submission${totalIntegrityFlags > 1 ? 's' : ''} flagged`}
+                  {flaggedStudents === 0 ? 'No concerns detected' : `${flaggedStudents} student${flaggedStudents > 1 ? 's' : ''} need review`}
                 </p>
               </div>
             </section>

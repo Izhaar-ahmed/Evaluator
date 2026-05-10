@@ -44,9 +44,9 @@ export const ResultCard: React.FC<ResultCardProps> = ({
   const hasFlagAlert = flag_score > 0.7 || flag_reasons.length > 0
 
   const getScoreColor = (score: number) => {
-    if (score >= 90) return 'text-emerald-trust'
-    if (score >= 70) return 'text-violet-primary'
-    if (score >= 50) return 'text-yellow-400'
+    if (score >= 9) return 'text-emerald-trust'
+    if (score >= 7) return 'text-violet-primary'
+    if (score >= 5) return 'text-yellow-400'
     return 'text-coral'
   }
 
@@ -87,7 +87,7 @@ export const ResultCard: React.FC<ResultCardProps> = ({
           <div className="text-right">
             <div className={`font-mono text-xl font-bold ${getScoreColor(percentage)}`}>
               {percentage.toFixed(1)}
-              <span className="text-xs font-normal text-frost-muted ml-0.5">/100</span>
+              <span className="text-xs font-normal text-frost-muted ml-0.5">/10</span>
             </div>
             {(percentile || improvement_delta) && (
               <div className="flex gap-2 text-[10px] text-frost-muted justify-end mt-0.5">
