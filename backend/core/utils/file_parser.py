@@ -20,7 +20,7 @@ def read_file(file_path: str) -> Optional[str]:
         raise FileNotFoundError(f"File not found: {file_path}")
 
     # Check supported file types
-    supported_extensions = {".py", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".txt", ".pdf"}
+    supported_extensions = {".py", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".txt", ".pdf", ".html", ".htm"}
     if path.suffix.lower() not in supported_extensions:
         return None
 
@@ -299,14 +299,46 @@ def _split_text(content: str) -> Tuple[str, str]:
     """
     Extract code from a text/markdown file.
 
-    Code = fenced code blocks (```...```) + indented blocks (4+ spaces).
-    Text = everything else.
+    Detects code via three strategies (in priority order):
+    1. Fenced code blocks (```...```)
+    2. Bare Python/C++ function definitions at column 0
+    3. Indented blocks (4+ spaces after a blank line)
+
+    This ensures code is extracted even when students paste functions
+    without markdown formatting.
     """
     code_parts = []
     text_lines = []
     lines = content.split("\n")
 
+    # ── Patterns that signal the start of a bare code block ──
+    _CODE_START_PATTERNS = (
+        "def ",           # Python function
+        "class ",         # Python/C++ class
+        "#include",       # C++ header
+        "using namespace",# C++ namespace
+        "import ",        # Python import (at top of code block)
+    )
+
+    def _is_code_continuation(line: str) -> bool:
+        """Check if a line is part of a code block body."""
+        if not line.strip():
+            return True  # Blank lines inside code are OK
+        if line[0] in (' ', '\t'):
+            return True  # Indented = still inside function body
+        # Decorators, comments
+        stripped = line.strip()
+        if stripped.startswith('@') or stripped.startswith('#'):
+            return True
+        return False
+
+    def _is_code_start(line: str) -> bool:
+        """Check if a line starts a new bare code block."""
+        stripped = line.strip()
+        return any(stripped.startswith(p) for p in _CODE_START_PATTERNS)
+
     in_fenced_block = False
+    in_bare_code = False
     code_buffer = []
 
     i = 0
@@ -314,33 +346,71 @@ def _split_text(content: str) -> Tuple[str, str]:
         line = lines[i]
         stripped = line.strip()
 
+        # ── Strategy 1: Fenced code blocks ──
         if stripped.startswith("```"):
+            # Flush any bare code block in progress
+            if in_bare_code and code_buffer:
+                code_parts.append("\n".join(code_buffer))
+                code_buffer = []
+                in_bare_code = False
+
             if not in_fenced_block:
-                # Start of fenced code block
                 in_fenced_block = True
                 code_buffer = []
             else:
-                # End of fenced code block
                 in_fenced_block = False
                 if code_buffer:
                     code_parts.append("\n".join(code_buffer))
                 code_buffer = []
-        elif in_fenced_block:
-            code_buffer.append(line)
-        else:
-            # Check for indented code block (4+ spaces or tab, after a blank line)
-            if (line.startswith("    ") or line.startswith("\t")) and len(stripped) > 0:
-                # Check if previous line was blank or also indented
-                if i > 0 and (not lines[i - 1].strip() or lines[i - 1].startswith("    ")):
-                    code_parts.append(stripped)
-                else:
-                    text_lines.append(line)
-            else:
-                text_lines.append(line)
+            i += 1
+            continue
 
+        if in_fenced_block:
+            code_buffer.append(line)
+            i += 1
+            continue
+
+        # ── Strategy 2: Bare code blocks ──
+        if in_bare_code:
+            if _is_code_continuation(line):
+                code_buffer.append(line)
+                i += 1
+                continue
+            elif _is_code_start(line):
+                # New function/class definition — still code
+                code_buffer.append(line)
+                i += 1
+                continue
+            else:
+                # Non-indented prose line → code block ended
+                # But only if we've seen real code (not just blank lines)
+                real_code = [l for l in code_buffer if l.strip()]
+                if real_code:
+                    code_parts.append("\n".join(code_buffer))
+                else:
+                    text_lines.extend(code_buffer)
+                code_buffer = []
+                in_bare_code = False
+                # Fall through to handle current line as text
+
+        if _is_code_start(line):
+            in_bare_code = True
+            code_buffer = [line]
+            i += 1
+            continue
+
+        # ── Strategy 3: Indented blocks ──
+        if (line.startswith("    ") or line.startswith("\t")) and len(stripped) > 0:
+            if i > 0 and (not lines[i - 1].strip() or lines[i - 1].startswith("    ")):
+                code_parts.append(stripped)
+                i += 1
+                continue
+
+        # ── Regular text ──
+        text_lines.append(line)
         i += 1
 
-    # Flush unclosed fenced block
+    # Flush any remaining blocks
     if code_buffer:
         code_parts.append("\n".join(code_buffer))
 

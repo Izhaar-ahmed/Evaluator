@@ -43,6 +43,10 @@ export default function UploadPage() {
         formData.append('test_cases', data.testCases)
       }
 
+      if (data.transcriptText) {
+        formData.append('transcript_text', data.transcriptText)
+      }
+
       const res = await fetch(`${API_BASE_URL}/api/evaluate`, {
         method: 'POST',
         body: formData,
@@ -155,6 +159,8 @@ export default function UploadPage() {
                   { ext: '.h', label: 'Header' },
                   { ext: '.txt', label: 'Text' },
                   { ext: '.pdf', label: 'PDF' },
+                  { ext: '.html', label: 'HTML' },
+                  { ext: '.zip', label: 'ZIP Archive' },
                 ].map((fmt) => (
                   <div key={fmt.ext} className="flex items-center gap-2 text-sm text-frost-muted">
                     <span className="material-symbols-outlined text-[14px] text-violet-primary">check</span>

@@ -112,7 +112,9 @@ export default function ReviewQueuePage() {
     setIsSubmitting(true)
     setSubmitSuccess(false)
 
-    // If this is from the API, try to POST the override
+    let apiSuccess = false
+
+    // If this is from the API review queue, POST the override
     if (dataSource === 'api' && !selectedReview.id.startsWith('session-')) {
       try {
         const res = await fetch(`http://127.0.0.1:8000/api/reviews/${selectedReview.id}/override`, {
@@ -120,36 +122,58 @@ export default function ReviewQueuePage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ teacher_score: overrideScore, teacher_notes: teacherNotes || 'Manual review completed' })
         })
-        if (res.ok) {
-          setSubmitSuccess(true)
-          setTimeout(() => {
-            const remaining = reviews.filter(r => r.id !== selectedReview.id)
-            setReviews(remaining)
-            setSelectedReview(remaining[0] || null)
-            setTeacherNotes('')
-            setSubmitSuccess(false)
-            if (remaining[0]) {
-              setOverrideScore(Math.round(remaining[0].auto_score || 0))
-            }
-          }, 800)
+        if (res.ok) apiSuccess = true
+      } catch {
+        // Will try direct override below
+      }
+    }
+
+    // For session-based reviews (or if API review failed), use direct score override
+    if (!apiSuccess) {
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/api/evaluations/score-override`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            student_id: selectedReview.student_id,
+            new_score: overrideScore,
+            teacher_notes: teacherNotes || 'Manual review completed'
+          })
+        })
+        if (res.ok) apiSuccess = true
+      } catch {
+        // Backend may not be available
+      }
+    }
+
+    // Also update session storage so results page reflects the change
+    if (apiSuccess) {
+      try {
+        const sessionData = ResultsStore.getResults()
+        if (sessionData?.results) {
+          const updated = sessionData.results.map(r =>
+            r.submission_id === selectedReview.student_id
+              ? { ...r, final_score: overrideScore, percentage: overrideScore }
+              : r
+          )
+          ResultsStore.setResults({ ...sessionData, results: updated })
         }
       } catch {
-        // Handle silently
+        // Non-critical
       }
-    } else {
-      // Session-based override — just mark as reviewed locally
-      setSubmitSuccess(true)
-      setTimeout(() => {
-        const remaining = reviews.filter(r => r.id !== selectedReview.id)
-        setReviews(remaining)
-        setSelectedReview(remaining[0] || null)
-        setTeacherNotes('')
-        setSubmitSuccess(false)
-        if (remaining[0]) {
-          setOverrideScore(Math.round(remaining[0].auto_score || 0))
-        }
-      }, 800)
     }
+
+    setSubmitSuccess(true)
+    setTimeout(() => {
+      const remaining = reviews.filter(r => r.id !== selectedReview.id)
+      setReviews(remaining)
+      setSelectedReview(remaining[0] || null)
+      setTeacherNotes('')
+      setSubmitSuccess(false)
+      if (remaining[0]) {
+        setOverrideScore(Math.round(remaining[0].auto_score || 0))
+      }
+    }, 800)
 
     setIsSubmitting(false)
   }

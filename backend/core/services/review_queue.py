@@ -222,6 +222,9 @@ def set_teacher_override(
     Teacher overrides the auto-generated score.
 
     The original auto_score is preserved for tracking system accuracy.
+    Also propagates the new score to:
+    - student_scores table (student profile / history)
+    - evaluation_results table (results dashboard)
     """
     # Try database first
     db = get_db()
@@ -239,9 +242,14 @@ def set_teacher_override(
                 [teacher_score, teacher_notes, review_id],
             )
             if row:
-                return _serialize_row(row)
-        except Exception:
-            pass
+                serialized = _serialize_row(row)
+                # ── Propagate score to student profile ──
+                _sync_score_to_student_profile(db, serialized, teacher_score)
+                # ── Propagate score to evaluation results ──
+                _sync_score_to_evaluation_results(db, serialized, teacher_score)
+                return serialized
+        except Exception as e:
+            print(f"Review override DB error: {e}")
 
     # Fallback: in-memory
     if review_id in _MEMORY_QUEUE:
@@ -250,6 +258,64 @@ def set_teacher_override(
         _MEMORY_QUEUE[review_id]["teacher_notes"] = teacher_notes
         return _MEMORY_QUEUE[review_id]
     return None
+
+
+def _sync_score_to_student_profile(db, review_row: Dict, new_score: float):
+    """Update the most recent student_scores entry to reflect teacher override."""
+    student_id = review_row.get("student_id", "")
+    assignment_id = review_row.get("assignment_id", "")
+    if not student_id or not assignment_id:
+        return
+
+    try:
+        # Update the latest score for this student + assignment combo
+        db.execute(
+            """
+            UPDATE student_scores
+            SET score = %s
+            WHERE id = (
+                SELECT id FROM student_scores
+                WHERE student_id = %s AND assignment_id = %s
+                ORDER BY submitted_at DESC
+                LIMIT 1
+            )
+            """,
+            [new_score, student_id, assignment_id],
+        )
+        print(f"✓ Student profile synced: {student_id} → {new_score}")
+    except Exception as e:
+        print(f"⚠ Student profile sync failed (non-fatal): {e}")
+
+
+def _sync_score_to_evaluation_results(db, review_row: Dict, new_score: float):
+    """Update evaluation_results to reflect teacher override."""
+    student_id = review_row.get("student_id", "")
+    submission_id = review_row.get("submission_id", "")
+    if not student_id:
+        return
+
+    try:
+        # The submission_id in review_queue is "{student_id}_{assignment_id}"
+        # but in evaluation_results, submission_id is the student name.
+        # Try matching by student_id directly.
+        percentage = round(new_score / 100 * 100, 2)  # score is already 0-100
+        db.execute(
+            """
+            UPDATE evaluation_results
+            SET final_score = %s,
+                percentage = %s
+            WHERE id = (
+                SELECT id FROM evaluation_results
+                WHERE submission_id = %s
+                ORDER BY evaluated_at DESC
+                LIMIT 1
+            )
+            """,
+            [new_score, percentage, student_id],
+        )
+        print(f"✓ Evaluation results synced: {student_id} → {new_score}")
+    except Exception as e:
+        print(f"⚠ Evaluation results sync failed (non-fatal): {e}")
 
 
 def get_queue_stats() -> Dict:
