@@ -109,13 +109,16 @@ class CodeEvaluationAgent(EvaluationAgent):
         has_problem = bool(problem_statement and problem_statement.strip())
 
         # ── Approach scoring ──
+        # Use test_cases from rubric if available, otherwise keep the ones from input_data
+        rubric_tests = rubric.get("test_cases", [])
+        if rubric_tests:
+            test_cases = rubric_tests
         if has_problem:
             approach_score = self._evaluate_approach(
                 student_code, problem_statement, feedback, language, test_cases, features
             )
         else:
             # No problem statement — grade purely on code quality
-            # Use complexity_score to differentiate submissions even without a problem
             complexity = features.get("complexity_score", 50)
             approach_score = min(60 + (complexity * 0.3), 90)
             feedback.append(
@@ -125,16 +128,20 @@ class CodeEvaluationAgent(EvaluationAgent):
             self._last_missing_concepts = []
         scores["approach"] = approach_score
 
+        # Capture test pass rate for score floor calculation later
+        test_pass_rate = getattr(self, "_last_test_pass_rate", None)
+
         # ── Conditional Effort Rewarding (relevance gate) ──
         # CRITICAL FIX: Only apply penalty when LLM EXPLICITLY says IRRELEVANT.
         # UNCERTAIN means "LLM couldn't determine" — NOT "code is bad".
         verdict = getattr(self, "_last_relevance_verdict", "UNCERTAIN")
         if verdict == "IRRELEVANT":
-            # LLM explicitly confirmed irrelevance — apply strong penalty
-            relevance_multiplier = 0.3
+            # LLM explicitly confirmed irrelevance — apply very strong penalty
+            # Wrong-problem submissions should not earn effort/structure credit
+            relevance_multiplier = 0.1
         elif verdict == "PARTIAL":
-            # LLM says partially relevant — mild penalty
-            relevance_multiplier = max(0.7, approach_score / 100.0)
+            # LLM says partially relevant — moderate penalty
+            relevance_multiplier = 0.5
         else:
             # RELEVANT or UNCERTAIN — no penalty
             relevance_multiplier = 1.0
@@ -153,8 +160,8 @@ class CodeEvaluationAgent(EvaluationAgent):
 
         if verdict == "IRRELEVANT":
             feedback.append(
-                "Evaluation Note: Non-relevant submission. "
-                "Effort and structure rewards are reduced."
+                "⚠️ Wrong problem submitted. Code quality rewards are heavily reduced. "
+                "Please solve the assigned problem."
             )
 
         # ── Calculate total score ──
@@ -167,6 +174,25 @@ class CodeEvaluationAgent(EvaluationAgent):
 
         total_score = sum(scores.get(k, 0) * v for k, v in weights.items())
         max_score = 100  # Always out of 100
+
+        # ── Test pass rate floor ──
+        # When test cases run and pass at a high rate, this is the strongest
+        # objective signal. Don't let readability/structure drag below this.
+        if test_pass_rate is not None and test_pass_rate >= 50:
+            # Floor = 95% of test pass rate (so 80% pass → floor of 76)
+            test_floor = test_pass_rate * 0.95
+            if total_score < test_floor:
+                feedback.append(
+                    f"✓ Score boosted by test results: {total_score:.1f} → {test_floor:.1f} "
+                    f"(test pass rate: {test_pass_rate:.0f}%)"
+                )
+                total_score = test_floor
+
+        # ── Hard cap for IRRELEVANT submissions ──
+        # Even if readability/structure/effort are perfect, wrong-problem
+        # submissions should never score above 25.
+        if verdict == "IRRELEVANT":
+            total_score = min(total_score, 25)
 
         # ── LLM Feedback ──
         if self.llm_service.enabled:
@@ -273,6 +299,8 @@ class CodeEvaluationAgent(EvaluationAgent):
                 feedback.append(
                     f"✓ Test execution: {test_score}% of test cases passed."
                 )
+                # Store for total score floor calculation
+                self._last_test_pass_rate = test_score
                 # Blend: 40% analysis + 60% ground-truth tests
                 blended = 0.4 * base_score + 0.6 * test_score
                 return min(round(blended), 100)

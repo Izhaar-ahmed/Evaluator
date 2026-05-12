@@ -429,6 +429,89 @@ print(_result)
         return code + "\n" + wrapper
 
     @staticmethod
+    def _wrap_standalone_function(code: str) -> str:
+        """
+        Auto-wrap standalone Python functions (not in a class) with a main block.
+
+        Used for mixed evaluations where code is extracted from .txt files
+        as bare function definitions (e.g., `def binary_search(arr, target):`).
+
+        Detects the first function and generates code that:
+        1. Reads stdin
+        2. Parses the arguments
+        3. Calls the function
+        4. Prints the result
+        """
+        import ast as _ast
+
+        try:
+            tree = _ast.parse(code)
+        except SyntaxError:
+            return code
+
+        # Find top-level function definitions (skip if there are classes)
+        functions = []
+        has_main = False
+        for node in _ast.iter_child_nodes(tree):
+            if isinstance(node, _ast.ClassDef):
+                return code  # Has classes — use class wrapper instead
+            if isinstance(node, _ast.FunctionDef):
+                functions.append(node)
+            # Check for existing main block
+            if isinstance(node, _ast.If):
+                try:
+                    if (isinstance(node.test, _ast.Compare) and
+                        hasattr(node.test.left, 'id') and
+                        node.test.left.id == '__name__'):
+                        has_main = True
+                except (AttributeError, IndexError):
+                    pass
+
+        # Skip if there's already a main block or no functions found
+        if has_main or not functions:
+            return code
+
+        # Use the first function
+        func = functions[0]
+        func_name = func.name
+        params = [a.arg for a in func.args.args if a.arg != 'self']
+        param_count = len(params)
+
+        wrapper = f"""
+import sys
+import json
+
+# Read stdin
+_raw_input = sys.stdin.read().strip()
+
+def _parse_input(raw):
+    '''Parse stdin into Python objects — handles multi-line JSON args.'''
+    lines = raw.strip().split('\\n')
+    args = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            args.append(json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            try:
+                args.append(int(line))
+            except ValueError:
+                try:
+                    args.append(float(line))
+                except ValueError:
+                    args.append(line)
+    return args
+
+_args = _parse_input(_raw_input)
+_result = {func_name}(*_args[:{param_count}])
+print(_result)
+"""
+        return code + "\n" + wrapper
+
+
+    @staticmethod
     def _wrap_cpp_class_solution(code: str) -> str:
         """
         Auto-wrap LeetCode-style C++ 'class Solution' code with includes and main().
@@ -645,6 +728,9 @@ int main() {{
             exec_code = code
             if use_local_python and 'class Solution' in code:
                 exec_code = self._wrap_class_solution(code, stdin)
+            elif use_local_python and 'class Solution' not in code and 'def ' in code:
+                # Standalone Python functions (e.g., extracted from .txt files)
+                exec_code = self._wrap_standalone_function(code)
             elif (use_local_cpp or use_judge0) and language == 'cpp' and 'class Solution' in code:
                 exec_code = self._wrap_cpp_class_solution(code)
 
