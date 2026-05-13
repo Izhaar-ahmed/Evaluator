@@ -76,6 +76,9 @@ class LLMService:
         """
         Generate qualitative feedback based on deterministic findings.
         
+        Uses Gemini API for feedback generation (higher quality).
+        Falls back to local Phi-3 Mini SLM only if Gemini is unavailable.
+        
         Args:
             context_type: "code" or "content"
             submission_content: The student's code or text.
@@ -89,11 +92,10 @@ class LLMService:
         if not self.enabled:
             return []
 
+        # ── Try Gemini first (best quality feedback) ──
         self._ensure_setup()
         
-        # Try a few common model identifiers to avoid 404s/Quotas
         models_to_try = [self.model_name, "gemini-2.0-flash", "gemini-flash-latest", "gemini-2.5-flash", "gemini-pro-latest"]
-        # Remove duplicates while preserving order
         models_to_try = list(dict.fromkeys(m for m in models_to_try if m))
         
         last_error = ""
@@ -104,7 +106,7 @@ class LLMService:
                 response = client.generate_content(prompt)
                 
                 if response.text:
-                    # Parse bullet points from response
+                    print(f"✓ Gemini ({model}) generated feedback successfully")
                     lines = [line.strip() for line in response.text.split("\n") if line.strip()]
                     return lines if lines else [response.text.strip()]
                 
@@ -113,12 +115,13 @@ class LLMService:
             except Exception as e:
                 last_error = str(e)
                 continue
-        
-        # ── Fallback to Local SLM ──
+
+        # ── Fallback: Local Phi-3 Mini SLM if Gemini is completely unavailable ──
+        print(f"⚠ Gemini feedback failed ({last_error[:80]}). Trying local SLM fallback...")
         if self._use_local_slm:
             local_slm = _get_local_slm()
             if local_slm and local_slm.available:
-                print("⟳ Gemini failed → falling back to local Phi-3 SLM for feedback")
+                print("⚡ Using local Phi-3 SLM for feedback (Gemini fallback)")
                 try:
                     return local_slm.generate_semantic_feedback(
                         context_type, submission_content, rubric_context,
@@ -127,7 +130,7 @@ class LLMService:
                 except Exception as e:
                     print(f"⚠ Local SLM feedback also failed: {e}")
 
-        print(f"WARNING: All LLM models failed. Last error: {last_error}. Falling back to rule-based feedback.")
+        print(f"WARNING: All feedback models failed. Last error: {last_error}. Falling back to rule-based feedback.")
         return []
 
     def _build_prompt(

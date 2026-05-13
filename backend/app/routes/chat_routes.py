@@ -118,26 +118,22 @@ def _build_student_context(login_id: str) -> str:
     return "\n".join(lines)
 
 
-SYSTEM_PROMPT = """You are an AI Study Coach for a student in an academic evaluation platform called Evaluator 2.0. You run locally on the student's machine using Phi-3 Mini.
+SYSTEM_PROMPT = """You are an AI Study Coach for a student in Evaluator 2.0. You run locally using Phi-3 Mini.
+
+CRITICAL RULES:
+- Use ONLY the student data provided below. NEVER invent fake names, scores, topics, or grades.
+- If no data is available, say "I don't have enough data yet" instead of making things up.
+- The student's ID is shown in the context below — use that, not a made-up name.
 
 Your role:
-- Answer ANY question the student asks — academic, coding, career, study strategies, or general knowledge
-- Provide personalized, actionable improvement advice based on the student's actual scores and feedback when relevant
-- Create detailed, structured study plans with day-by-day breakdowns when asked
-- Explain evaluation feedback in simple, encouraging terms
-- Identify weak areas and suggest specific exercises with concrete examples
-- Give coding tips with actual code snippets when helpful
+- Answer any question the student asks — academic, coding, career, study strategies
+- Give personalized advice using the ACTUAL scores and feedback shown below
+- Create study plans with day-by-day breakdowns when asked
 - Be encouraging but honest about areas needing improvement
+- Use markdown: **bold**, bullet points, `code` for code references
+- Keep responses focused (2-4 paragraphs for general questions, longer for plans)
 
-Rules:
-- You can answer ANY question — you are a general-purpose study assistant, not limited to specific topics
-- Use markdown formatting: **bold** for emphasis, bullet points for lists, `code` for code references
-- Reference the student's actual data when the question is about their performance
-- When creating study plans, use a clear day-by-day structure with checkboxes
-- Never reveal other students' data
-- Keep responses focused and practical (2-4 paragraphs for general questions, longer for study plans)
-
-Student context:
+Student context (USE THESE EXACT VALUES):
 {context}
 """
 
@@ -257,50 +253,105 @@ async def student_chat(
 # Structured improvement plan (non-streaming)
 # ---------------------------------------------------------------------------
 
-IMPROVEMENT_PLAN_PROMPT = """Based on the student's evaluation data below, create a detailed, structured weekly improvement plan.
+def _build_improvement_plan_prompt(login_id: str) -> str:
+    """Build an improvement plan prompt with REAL data pre-filled.
+    
+    Phi-3 Mini hallucinates when given abstract placeholders like [Student Name].
+    This function pre-fills every data field so the SLM only generates the plan.
+    """
+    db_id = _resolve_db_student_id(login_id)
+    summary = get_student_summary(db_id)
+    skills = get_skill_breakdown(db_id)
+    history = get_score_history(db_id, limit=5)
+    rank = get_class_percentile(db_id)
 
-Format the plan EXACTLY like this:
+    # Pre-fill header
+    total = summary.get("total_submissions", 0)
+    avg = summary.get("average_score", 0)
+    grade = summary.get("cumulative_grade", "N/A")
+    gpa = summary.get("gpa", 0)
+    percentile = rank.get("percentile", "N/A")
+    class_size = rank.get("class_size", "?")
 
-**Improvement Plan for [Student Name]**
-**Current Status:** [Grade] | [GPA] | [Percentile]th percentile
+    # Pre-fill topic scores (sorted weakest first)
+    topic_lines = []
+    if skills:
+        sorted_skills = sorted(skills, key=lambda s: s.get("avg_score", 0))
+        for i, s in enumerate(sorted_skills, 1):
+            topic_lines.append(f"{i}. {s['topic_tag']} — current score: {s['avg_score']:.0f}/100 ({s.get('submission_count', 0)} submissions)")
+    else:
+        topic_lines.append("1. General — current score: {:.0f}/100".format(avg))
+
+    # Pre-fill recent submission info
+    recent_lines = []
+    if history:
+        for h in history[:3]:
+            recent_lines.append(f"- {h.get('topic_tag', 'general')}: {h['score']:.0f}/100 on {str(h.get('submitted_at', ''))[:10]}")
+
+    # Pre-fill recent feedback
+    feedback_snippet = ""
+    db = get_db()
+    if db.available:
+        all_ids = list(set([login_id, f"{login_id}_Result", db_id]))
+        placeholders = ", ".join(["%s"] * len(all_ids))
+        rows = db.execute(
+            f"""SELECT feedback FROM evaluation_results
+               WHERE submission_id IN ({placeholders})
+               ORDER BY evaluated_at DESC LIMIT 1""",
+            all_ids,
+        )
+        if rows:
+            fb = rows[0].get("feedback", "")
+            if isinstance(fb, str):
+                try:
+                    fb = json.loads(fb)
+                except Exception:
+                    pass
+            if isinstance(fb, list):
+                fb = " ".join(str(x) for x in fb)
+            feedback_snippet = str(fb)[:400]
+
+    prompt = f"""Create a 2-week improvement plan for this student. Use ONLY the data provided below. Do NOT invent names, scores, or topics.
+
+STUDENT DATA (use these exact values):
+- Student ID: {login_id}
+- Total submissions: {total}
+- Average score: {avg:.1f}/100
+- Grade: {grade} | GPA: {gpa:.2f}
+- Class rank: {percentile}th percentile out of {class_size} students
+
+TOPIC SCORES (weakest first):
+{chr(10).join(topic_lines)}
+
+RECENT SUBMISSIONS:
+{chr(10).join(recent_lines) if recent_lines else "No recent submissions"}
+
+LATEST FEEDBACK FROM EVALUATOR:
+{feedback_snippet if feedback_snippet else "No feedback available"}
+
+---
+
+Now write the improvement plan in this EXACT format:
+
+**Improvement Plan for {login_id}**
+**Current Status:** {grade} | GPA {gpa:.2f} | {percentile}th percentile
 
 **Priority Areas (weakest → strongest):**
-1. [Topic] — current score: [X]/100
-2. [Topic] — current score: [X]/100
+{chr(10).join(topic_lines)}
 
 **Week 1: Foundation Building**
-
-- Day 1-2: [Topic Focus]
-  - [ ] [Specific task with concrete example]
-  - [ ] [Specific task]
-  - [ ] Practice: [exercise description]
-
-- Day 3-4: [Topic Focus]
-  - [ ] [Specific task]
-  - [ ] [Specific task]
-
-- Day 5: Review & Self-Test
-  - [ ] Re-attempt weakest submission
-  - [ ] Compare with original feedback
-
-- Day 6-7: Rest + Light Review
-  - [ ] Read through corrected code
-  - [ ] Note 3 key learnings
+(Create a day-by-day plan with checkboxes targeting the weakest topics above. Include specific coding exercises, practice problems, and review tasks.)
 
 **Week 2: Skill Deepening**
-[Continue with similar structure]
+(Continue the plan with harder exercises and self-tests.)
 
 **Key Resources:**
-- [Specific resource/tutorial for weak area 1]
-- [Specific resource for weak area 2]
+(Suggest 3-4 specific free online resources like GeeksForGeeks, LeetCode, Khan Academy relevant to the topics above.)
 
 **Target Goals:**
-- Raise [weak topic] from [X] to [Y] within 2 weeks
-- Achieve overall grade of [target]
-
-Student context:
-{context}
+(Set realistic score improvement targets based on the current scores above.)
 """
+    return prompt
 
 
 @router.post("/improvement-plan")
@@ -315,16 +366,11 @@ async def generate_improvement_plan(
     if not _check_ollama():
         raise HTTPException(503, "Ollama is not running. Start with: ollama serve")
 
-    context = _build_student_context(login_id)
-    prompt = IMPROVEMENT_PLAN_PROMPT.format(context=context)
-    system = "You are an expert academic coach. Create actionable, specific study plans. Use markdown formatting with checkboxes."
+    prompt = _build_improvement_plan_prompt(login_id)
+    system = "You are an expert academic coach. Use ONLY the student data provided. Never invent fake names or scores. Use markdown formatting with checkboxes."
 
     def event_stream():
-        for token in _stream_ollama(
-            "Generate my personalized improvement plan based on my data.",
-            system + "\n\n" + prompt,
-            max_tokens=1024,
-        ):
+        for token in _stream_ollama(prompt, system, max_tokens=1024):
             yield f"data: {json.dumps({'token': token})}\n\n"
         yield f"data: {json.dumps({'done': True})}\n\n"
 
