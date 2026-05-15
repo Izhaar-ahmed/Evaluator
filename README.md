@@ -7,13 +7,14 @@
   <img src="https://img.shields.io/badge/Ollama-Local_SLM-FF6B35?style=for-the-badge&logo=ollama&logoColor=white" />
   <img src="https://img.shields.io/badge/Phi--3_Mini-Offline-00D4AA?style=for-the-badge&logo=microsoft&logoColor=white" />
   <img src="https://img.shields.io/badge/JWT-Auth-FB015B?style=for-the-badge&logo=jsonwebtokens&logoColor=white" />
+  <img src="https://img.shields.io/badge/Transcript_Eval-VTT_Parser-E91E63?style=for-the-badge&logo=audioboom&logoColor=white" />
 </p>
 
 <h1 align="center">🎓 Evaluator 2.0</h1>
 <h3 align="center">Intelligent AI-Powered Academic Assessment Platform</h3>
 
 <p align="center">
-  <em>An end-to-end system for evaluating student code and content submissions using AST analysis, LLM reasoning (cloud + offline), semantic embeddings, automated test execution, plagiarism detection, and real-time student performance tracking — with a multi-tier AI fallback chain (Gemini → Ollama Phi-3 → rule-based) and intelligent single-file mixed evaluation, managed through role-based teacher and student dashboards with JWT authentication.</em>
+  <em>An end-to-end system for evaluating student code, content, and lecture transcript summaries using AST analysis, LLM reasoning (cloud + offline), semantic embeddings, automated test execution, plagiarism detection, and real-time student performance tracking — with a multi-tier AI fallback chain (Gemini → Ollama Phi-3 → rule-based), intelligent single-file mixed evaluation, and batch transcript summary scoring against VTT lecture transcripts, managed through role-based teacher and student dashboards with JWT authentication.</em>
 </p>
 
 <p align="center">
@@ -38,23 +39,24 @@
     - [Step 7: Integrity Check (Plagiarism + AI Detection)](#step-7-integrity-check-plagiarism--ai-detection)
     - [Step 8: Student Tracking & Percentiles](#step-8-student-tracking--percentiles)
     - [Step 9: Review Queue](#step-9-review-queue)
-5.  [Tree-Sitter: How Code is Structurally Analyzed](#-tree-sitter-how-code-is-structurally-analyzed)
-6.  [Semantic Embeddings: Understanding Meaning, Not Just Keywords](#-semantic-embeddings-understanding-meaning-not-just-keywords)
-7.  [LLM Integration: Multi-Tier AI Fallback Chain](#-llm-integration-multi-tier-ai-fallback-chain)
-8.  [Offline SLM: Ollama + Phi-3 Mini](#-offline-slm-ollama--phi-3-mini)
-9.  [Test Case Execution: Verifying Code Correctness](#-test-case-execution-verifying-code-correctness)
-10. [Integrity System: Plagiarism & AI Detection](#-integrity-system-plagiarism--ai-detection)
-11. [Review Queue: Human-in-the-Loop](#-review-queue-human-in-the-loop)
-12. [Student Profile Tracking](#-student-profile-tracking)
-13. [Frontend: The Teacher Dashboard](#-frontend-the-teacher-dashboard)
-14. [Frontend: The Student Portal](#-frontend-the-student-portal)
-15. [Authentication & Role-Based Access](#-authentication--role-based-access)
-16. [API Reference](#-api-reference)
-17. [Project Structure](#-project-structure)
-18. [How to Run](#-how-to-run)
-19. [Environment Variables](#-environment-variables)
-20. [Tech Stack](#-tech-stack)
-21. [Common Questions](#-common-questions)
+5.  [Transcript Evaluation: Scoring Lecture Summaries](#-transcript-evaluation-scoring-lecture-summaries)
+6.  [Tree-Sitter: How Code is Structurally Analyzed](#-tree-sitter-how-code-is-structurally-analyzed)
+7.  [Semantic Embeddings: Understanding Meaning, Not Just Keywords](#-semantic-embeddings-understanding-meaning-not-just-keywords)
+8.  [LLM Integration: Multi-Tier AI Fallback Chain](#-llm-integration-multi-tier-ai-fallback-chain)
+9.  [Offline SLM: Ollama + Phi-3 Mini](#-offline-slm-ollama--phi-3-mini)
+10. [Test Case Execution: Verifying Code Correctness](#-test-case-execution-verifying-code-correctness)
+11. [Integrity System: Plagiarism & AI Detection](#-integrity-system-plagiarism--ai-detection)
+12. [Review Queue: Human-in-the-Loop](#-review-queue-human-in-the-loop)
+13. [Student Profile Tracking](#-student-profile-tracking)
+14. [Frontend: The Teacher Dashboard](#-frontend-the-teacher-dashboard)
+15. [Frontend: The Student Portal](#-frontend-the-student-portal)
+16. [Authentication & Role-Based Access](#-authentication--role-based-access)
+17. [API Reference](#-api-reference)
+18. [Project Structure](#-project-structure)
+19. [How to Run](#-how-to-run)
+20. [Environment Variables](#-environment-variables)
+21. [Tech Stack](#-tech-stack)
+22. [Common Questions](#-common-questions)
 
 ---
 
@@ -70,6 +72,7 @@
 6. **Generates detailed, personalized feedback** for each student
 7. **Tracks student progress** over time with percentiles and trends
 8. **Routes uncertain submissions** to a manual review queue for the teacher
+9. **Evaluates lecture transcript summaries** — students summarize a VTT lecture, and the system scores coverage, depth, and expression using batch semantic embeddings
 
 The system is **NOT** a simple keyword counter. It combines multiple AI techniques:
 - **Tree-sitter** for understanding code structure at the syntax level
@@ -79,6 +82,7 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
 - **GPT-2 perplexity** for detecting AI-generated submissions
 - **Judge0 / Local execution** for actually running code against test cases
 - **Auto-split parser** for single-file mixed submissions (code + explanation in one file)
+- **VTT transcript parser** for batch-scoring student summaries against lecture transcripts
 
 ---
 
@@ -100,6 +104,9 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
 | 🔐 **JWT Authentication** | Role-based access control (teacher/student) | PyJWT + SHA-256 |
 | 📄 **Single-File Mixed Eval** | One file with code + explanation → auto-split and evaluate both | Language-aware parser (Python/Text/PDF) |
 | 🔌 **Offline SLM** | Zero API cost, runs locally on Apple Silicon GPU | Ollama + Phi-3 Mini (Q4_K_M, 2.2GB) |
+| 🎙 **Transcript Evaluation** | Score student summaries against VTT lecture transcripts | Batch embeddings + TF-IDF concept extraction |
+| 📊 **Batch Processing** | Evaluate 120+ students in ~60s using batch-encoded embeddings | all-MiniLM-L6-v2 + NumPy |
+| 📥 **CSV Export** | Export results with /10 scores, feedback, and student summary text | Custom CSV with clean feedback |
 
 ---
 
@@ -448,6 +455,149 @@ Certain submissions are automatically flagged for teacher review. A submission i
 | `LOW_SCORE` | Final score < 10 | Likely an evaluation error |
 
 The teacher can then review the submission and **override the score** with their own assessment.
+
+---
+
+## 🎙 Transcript Evaluation: Scoring Lecture Summaries
+
+**Where**: `backend/core/utils/vtt_parser.py` → `backend/core/controller/orchestrator.py`
+
+A dedicated evaluation mode for **lecture transcript summaries**. Teachers upload a `.vtt` lecture transcript and student HTML/text files containing their summaries. The system scores each summary against the lecture content using semantic embeddings — **100% local, zero API cost**.
+
+### How It Works
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  TEACHER UPLOADS                                                │
+│  1. Lecture transcript (.vtt file)                              │
+│  2. Student summaries (120+ .html files from Moodle export)     │
+└──────────┬─────────────────────────────────────────────────────┘
+           ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 1: Parse VTT Transcript                                   │
+│  • Strip timestamps, speaker labels, and formatting             │
+│  • Merge cue text into clean paragraph form                     │
+│  • Output: single clean transcript string                       │
+└──────────┬─────────────────────────────────────────────────────┘
+           ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 2: Extract Key Concepts (TF-IDF + Phrase Mining)          │
+│  • Mine 2-3 word technical phrases from transcript              │
+│  • Score single words with TF × IDF × tech_boost                │
+│  • Stem-aware deduplication ("dimension" ≠ "dimensional" ✗)     │
+│  • Output: top 10 unique concepts                               │
+└──────────┬─────────────────────────────────────────────────────┘
+           ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 3: Batch Score All Students (ONE encode call)             │
+│  • Encode all concepts → 384-dim vectors (one batch)            │
+│  • Split each summary into sentences                            │
+│  • Encode ALL sentences from ALL students → one batch call      │
+│  • Cosine similarity: each sentence × each concept              │
+│  • Threshold: 0.30 (phrases) / 0.35 (single words)             │
+│  • Supplementary keyword matching for robustness                │
+│  • Output: matched/missing concepts per student                 │
+└──────────┬─────────────────────────────────────────────────────┘
+           ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 4: Multi-Criteria Scoring                                 │
+│                                                                 │
+│  Score/10 = Coverage(35%) + Depth(15%) + Expression(10%)        │
+│           + Attempt(30%) + Base(10%)                            │
+│                                                                 │
+│  • Coverage: % of 10 key concepts found in summary              │
+│  • Depth: explains WHY, not just WHAT (causal language)         │
+│  • Expression: sentence structure, punctuation, readability     │
+│  • Attempt: submit 10+ words → full 30% (rewards effort)       │
+│  • Base: 1/10 guaranteed for any submission                     │
+│  • Floor: minimum 3.5/10 for genuine attempts                   │
+└──────────┬─────────────────────────────────────────────────────┘
+           ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 5: Rich Feedback Generation                               │
+│  • Overall assessment (Excellent/Good/Adequate/Needs Work)      │
+│  • Specific strengths identified                                │
+│  • Topics covered and missing                                   │
+│  • Actionable improvement suggestions                           │
+└──────────┬─────────────────────────────────────────────────────┘
+           ▼
+┌────────────────────────────────────────────────────────────────┐
+│  STEP 6: Integrity + Export                                     │
+│  • Cross-student plagiarism check (fingerprinting + fuzzy)      │
+│  • CSV export: score/10, coverage, feedback, summary text       │
+│  • Dashboard display with percentile ranking                    │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Concept Extraction: Stem-Aware Deduplication
+
+The concept extractor uses a custom **suffix-stripping stemmer** to avoid duplicate concepts:
+
+| Raw Extracted | Stem | Kept? | Reason |
+|---|---|---|---|
+| `dimensionality reduction` | `dimension`, `reduc` | ✅ | First occurrence |
+| `dimensional` | `dimension` | ❌ | Stem already seen |
+| `precision` | `precis` | ✅ | New stem |
+| `false positive` | `fals`, `posit` | ✅ | New stems |
+| `positive` | `posit` | ❌ | Stem covered by "false positive" |
+
+This ensures the 10 extracted concepts are **truly distinct topics**, not morphological variants.
+
+### Scoring Formula Breakdown
+
+```python
+# Each component scores 0-100 internally, then weighted:
+total = (
+    concept_coverage * 0.35 +    # How many of 10 key topics were mentioned
+    depth * 0.15 +               # Explains WHY, uses causal language
+    expression * 0.10 +          # Writing quality (sentences, punctuation)
+    attempt_score * 0.30 +       # Submit 10+ words → full marks here
+    10.0                         # Base points (1/10 guaranteed)
+)
+
+# Floor: genuine submissions (10+ words) get at least 3.5/10
+if word_count >= 10:
+    total = max(total, 35)
+
+final_score = total / 10  # Convert to /10 scale
+```
+
+### Performance: Batch Processing 120+ Students
+
+The key optimization is **batch encoding**. Instead of encoding each student's sentences individually (slow), the system:
+
+1. Collects ALL sentences from ALL 120 students into one list
+2. Encodes them in a **single `model.encode()` call** with `batch_size=128`
+3. Uses NumPy matrix operations for similarity computation
+
+| Approach | Time for 120 students |
+|---|---|
+| One-by-one encoding | ~6+ minutes |
+| Batch encoding | **~30-60 seconds** |
+
+### CSV Export Format
+
+The exported CSV contains:
+
+| Column | Description | Example |
+|---|---|---|
+| `student_name` | Clean name (no `_Result` suffix) | `Ramesh Chandra Dutta_35544` |
+| `score` | Final score out of 10 | `7.2` |
+| `concept_coverage` | Percentage of concepts matched | `60%` |
+| `concepts_matched` | Fraction matched | `6/10` |
+| `feedback` | Clean teacher-style feedback | `Good summary — covers key topics well.` |
+| `summary_text` | Student's actual submission text | `In today's class we learned about...` |
+
+> **No word_count, max_score, assignment_type, or file columns** — these were removed to keep the CSV focused on what teachers need.
+
+### Feedback Quality
+
+Feedback is structured in four sections:
+
+1. **Overall Assessment**: "🏆 Excellent Work", "✅ Good Summary", "📝 Adequate", or "⚠️ Needs Improvement"
+2. **Strengths**: What the student did well (e.g., "explained concepts clearly, not just listed them")
+3. **Topics Covered**: Which of the 10 key concepts were found
+4. **How to Improve**: Specific, actionable suggestions (e.g., "Include these missing topics: precision, f1 score")
 
 ---
 
@@ -1034,6 +1184,7 @@ This ensures students see their data regardless of how their ID was stored durin
 | `POST` | `/api/evaluate` | None* | Upload and evaluate submissions |
 | `GET` | `/api/evaluations/history` | None* | Retrieve all past evaluation results |
 | `DELETE` | `/api/evaluations/cleanup?below_score=10` | None* | Remove old broken evaluation results |
+| `DELETE` | `/api/evaluations/clear-all?confirm=true` | None* | Clear ALL evaluation data from database |
 | `GET` | `/api/reviews` | None* | Get pending review queue items |
 | `POST` | `/api/reviews/{id}/override` | None* | Teacher overrides a score |
 | `GET` | `/api/students/{id}/profile` | None* | Get student's complete profile |
@@ -1137,7 +1288,8 @@ Evaluator/
 │       └── utils/
 │           ├── file_parser.py         # File reading + student name extraction
 │           ├── rubric.py              # Rubric management + validation
-│           └── csv_export.py          # CSV report generation
+│           ├── csv_export.py          # CSV export (/10 scores, summary text, clean feedback)
+│           └── vtt_parser.py          # VTT transcript parser + concept extraction + batch scoring
 │
 ├── frontend/
 │   ├── app/
@@ -1168,7 +1320,8 @@ Evaluator/
 ├── test_submissions/                   # Sample test submissions
 │   ├── mixed_single/                  # Single-file mixed eval samples
 │   ├── mixed_test/                    # Two-file mixed eval samples
-│   └── mixed_txt_test/                # Text-based mixed eval samples
+│   ├── mixed_txt_test/                # Text-based mixed eval samples
+│   └── transcript_test/              # Transcript evaluation test files (VTT + HTML summaries)
 │
 ├── docker-compose.judge0.yml          # Self-hosted Judge0 setup
 ├── requirements.txt                   # Python dependencies
