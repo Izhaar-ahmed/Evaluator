@@ -6,6 +6,7 @@ import { ResultsStore } from '@/lib/results-store'
 import type { EvaluationResult } from '@/lib/results-store'
 import { ResultCard } from '@/components/results/ResultCard'
 import AppNavbar from '@/components/AppNavbar'
+import { API_BASE } from '@/lib/api'
 
 export default function ResultsPage() {
   const [results, setResults] = useState<EvaluationResult[]>([])
@@ -22,7 +23,7 @@ export default function ResultsPage() {
     }
     setClearing(true)
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/evaluations/clear-all?confirm=true', {
+      const res = await fetch(`${API_BASE}/api/evaluations/clear-all?confirm=true`, {
         method: 'DELETE',
       })
       if (res.ok) {

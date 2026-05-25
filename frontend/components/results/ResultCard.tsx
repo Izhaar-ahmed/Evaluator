@@ -28,6 +28,16 @@ export const ResultCard: React.FC<ResultCardProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false)
 
+  /**
+   * Strip Moodle metadata and _Result suffix for display.
+   * 'Deeksha Suresh_34567_Result' → 'Deeksha Suresh'
+   */
+  const cleanDisplayName = (raw: string) => {
+    let cleaned = raw.replace(/_Result$/, '')
+    cleaned = cleaned.replace(/_\d{4,6}$/, '')
+    return cleaned.trim()
+  }
+
   const formatText = (text: string) => {
     const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g)
     return parts.map((part, i) => {
@@ -75,7 +85,7 @@ export const ResultCard: React.FC<ResultCardProps> = ({
               className="text-sm font-semibold text-frost hover:text-violet-primary transition-colors"
               onClick={(e) => e.stopPropagation()}
             >
-              {name}
+              {cleanDisplayName(name)}
             </Link>
             <p className="text-xs text-frost-muted mt-0.5">
               {trend || 'Evaluation complete'}

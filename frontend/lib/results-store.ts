@@ -1,5 +1,7 @@
 'use client'
 
+import { API_BASE } from './api'
+
 export interface EvaluationResult {
   submission_id: string
   final_score: number
@@ -76,7 +78,7 @@ export const ResultsStore = {
     }>
   }> => {
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/evaluations/history')
+      const res = await fetch(`${API_BASE}/api/evaluations/history`)
       if (res.ok) {
         const data = await res.json()
         if (data.status === 'success') {

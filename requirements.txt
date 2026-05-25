@@ -2,16 +2,17 @@ fastapi
 uvicorn
 python-dotenv
 pydantic
-google-generativeai
 python-multipart
 requests
-aiofiles
-# --- New dependencies for v2.0 ---
+httpx
+# --- Core dependencies ---
 psycopg2-binary
-tree-sitter
-tree-sitter-python
-tree-sitter-cpp
 sentence-transformers
 numpy
 pypdf
 PyJWT
+# --- AST parsing ---
+tree-sitter
+tree-sitter-python
+tree-sitter-cpp
+nest-asyncio

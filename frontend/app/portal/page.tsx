@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import StudentNavbar from '@/components/StudentNavbar'
 import { AuthStore } from '@/lib/auth-store'
+import { API_BASE } from '@/lib/api'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -82,7 +83,7 @@ export default function StudentDashboard() {
 
     const fetchDashboard = async () => {
       try {
-        const res = await AuthStore.fetchAuth('http://127.0.0.1:8000/api/portal/dashboard')
+        const res = await AuthStore.fetchAuth(`${API_BASE}/api/portal/dashboard`)
         if (res.ok) {
           const json = await res.json()
           if (json.status === 'success') setData(json)

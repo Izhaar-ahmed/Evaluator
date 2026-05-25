@@ -1,5 +1,6 @@
 """Service layer for evaluation API."""
 
+import re
 from typing import Any, Dict, List, Optional
 
 from backend.app.schemas import (
@@ -143,8 +144,12 @@ class EvaluatorService:
             if isinstance(feedback, str):
                 feedback = [feedback]
 
+            # Clean Moodle metadata from student name for display
+            clean_name = student_name.replace("_Result", "")
+            clean_name = re.sub(r'_\d{4,6}$', '', clean_name).strip()
+
             item = EvaluationResultItem(
-                submission_id=student_name,
+                submission_id=clean_name,
                 final_score=final_score,
                 max_score=max_score,
                 percentage=round(percentage, 2),

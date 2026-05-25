@@ -25,6 +25,7 @@ from ..utils.vtt_parser import (
     parse_vtt,
     extract_concepts,
     extract_concept_dict,
+    llm_refine_concepts,
     score_summary_against_concepts,
     strip_html,
 )
@@ -124,9 +125,11 @@ class Orchestrator:
         """Evaluate code-only submissions with integrity checks."""
         results = {}
         test_cases = test_cases or []
+        total = len(submissions)
 
-        for filename, code in submissions.items():
+        for idx, (filename, code) in enumerate(submissions.items(), 1):
             student_name = get_student_name_from_filename(filename)
+            print(f"[{idx}/{total}] Evaluating {student_name}...")
 
             # Prepare input for code agent
             code_criteria = self.rubric.get_criteria("code")
@@ -187,9 +190,11 @@ class Orchestrator:
         self._precompute_embedding(ideal_reference, assignment_id)
 
         results = {}
+        total = len(submissions)
 
-        for filename, content in submissions.items():
+        for idx, (filename, content) in enumerate(submissions.items(), 1):
             student_name = get_student_name_from_filename(filename)
+            print(f"[{idx}/{total}] Evaluating {student_name}...")
 
             content_criteria = self.rubric.get_criteria("content")
             content_weights = {k: v.get("weight", 0.25) for k, v in content_criteria.items()}
@@ -373,11 +378,15 @@ class Orchestrator:
                 }
             return results
 
-        concepts = extract_concepts(clean_transcript, top_n=10)
+        # Phase 1b: Extract candidate concepts (oversample 20)
+        candidates = extract_concepts(clean_transcript, top_n=20)
+
+        # Phase 1c: LLM refines to only genuinely teachable concepts (dynamic count)
+        concepts = llm_refine_concepts(candidates, clean_transcript)
 
         transcript_word_count = len(clean_transcript.split())
         print(f"✓ Parsed transcript: {transcript_word_count} words")
-        print(f"✓ Extracted {len(concepts)} key concepts: {concepts[:10]}...")
+        print(f"✓ Final concepts ({len(concepts)}): {concepts}")
 
         # Phase 2: Pre-process ALL submissions (strip HTML, map to student names)
         cleaned_summaries = {}  # student_name -> cleaned text
@@ -474,6 +483,28 @@ class Orchestrator:
                 for imp in improvements:
                     feedback.append(f"  → {imp}")
 
+            # ── LLM-enhanced feedback (Groq) ──
+            # Pass rule-based analysis + student data to Groq for richer feedback
+            try:
+                from utils.llm_service import LLMService
+                llm = LLMService()
+                if llm.enabled:
+                    student_summary_text = cleaned_summaries.get(student_name, "")
+                    llm_feedback = llm.generate_semantic_feedback(
+                        context_type="transcript",
+                        submission_content=student_summary_text[:800],
+                        rubric_context=f"Lecture transcript concepts: {', '.join(concepts)}",
+                        deterministic_findings=feedback,
+                        missing_concepts=missing,
+                    )
+                    if llm_feedback and isinstance(llm_feedback, list) and len(llm_feedback) > 0:
+                        llm_text = llm_feedback[0] if len(llm_feedback) == 1 else " ".join(llm_feedback)
+                        if len(llm_text) > 50:
+                            # Prepend LLM insight after the rule-based header
+                            feedback.insert(2, f"**🤖 AI Analysis**: {llm_text[:500]}")
+            except Exception as e:
+                print(f"[Transcript] LLM feedback skipped for {student_name}: {e}")
+
             result_entry = {
                 "file": filename,
                 "assignment_type": "transcript",
@@ -499,6 +530,7 @@ class Orchestrator:
             self._maybe_queue(student_name, assignment_id, result_entry)
 
             results[student_name] = result_entry
+            print(f"  ✓ [{list(all_scores.keys()).index(student_name)+1}/{len(all_scores)}] {student_name} — {score_10}/10")
 
         return results
 

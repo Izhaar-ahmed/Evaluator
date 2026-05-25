@@ -16,6 +16,20 @@ export const FileItem: React.FC<FileItemProps> = ({ file, onRemove }) => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
   }
 
+  /**
+   * Strip Moodle metadata from filename for display.
+   * "Nitin M_34610.html"          → "Nitin M"
+   * "Deepak Paul Tirkey_35222.html" → "Deepak Paul Tirkey"
+   * "student_alice.py"             → "student_alice" (unchanged)
+   */
+  const cleanDisplayName = (name: string) => {
+    const dotIdx = name.lastIndexOf('.')
+    const stem = dotIdx > 0 ? name.substring(0, dotIdx) : name
+    // Match: Name_4-6digits at end of stem (Moodle ID pattern)
+    const cleaned = stem.replace(/_\d{4,6}$/, '')
+    return cleaned
+  }
+
   const getFileTypeLabel = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase()
     switch (ext) {
@@ -53,7 +67,7 @@ export const FileItem: React.FC<FileItemProps> = ({ file, onRemove }) => {
         </div>
         <div className="min-w-0">
           <p className="text-sm font-medium text-frost truncate">
-            {file.name}
+            {cleanDisplayName(file.name)}
           </p>
           <div className="flex items-center gap-2 mt-0.5">
             <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${getFileColor(file.name)}`}>

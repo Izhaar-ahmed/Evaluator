@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import AppNavbar from '@/components/AppNavbar'
 import { ResultsStore } from '@/lib/results-store'
 import type { EvaluationResult } from '@/lib/results-store'
+import { API_BASE } from '@/lib/api'
 
 interface ReviewItem {
   id: string
@@ -69,7 +70,7 @@ export default function ReviewQueuePage() {
 
   const fetchReviews = async () => {
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/reviews?status=pending')
+      const res = await fetch(`${API_BASE}/api/reviews?status=pending`)
       if (res.ok) {
         const data = await res.json()
         const items: ReviewItem[] = data.reviews || []
@@ -117,7 +118,7 @@ export default function ReviewQueuePage() {
     // If this is from the API review queue, POST the override
     if (dataSource === 'api' && !selectedReview.id.startsWith('session-')) {
       try {
-        const res = await fetch(`http://127.0.0.1:8000/api/reviews/${selectedReview.id}/override`, {
+        const res = await fetch(`${API_BASE}/api/reviews/${selectedReview.id}/override`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ teacher_score: overrideScore, teacher_notes: teacherNotes || 'Manual review completed' })
@@ -131,7 +132,7 @@ export default function ReviewQueuePage() {
     // For session-based reviews (or if API review failed), use direct score override
     if (!apiSuccess) {
       try {
-        const res = await fetch(`http://127.0.0.1:8000/api/evaluations/score-override`, {
+        const res = await fetch(`${API_BASE}/api/evaluations/score-override`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

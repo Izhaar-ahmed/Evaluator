@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import AppNavbar from '@/components/AppNavbar'
+import { API_BASE } from '@/lib/api'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -61,10 +62,10 @@ const SKILL_COLORS = [
 ]
 
 const ACHIEVEMENT_BG: Record<string, string> = {
-  amber:   'from-amber-400 to-amber-500',
-  violet:  'from-violet-primary to-violet-container',
+  amber: 'from-amber-400 to-amber-500',
+  violet: 'from-violet-primary to-violet-container',
   emerald: 'from-emerald-500 to-emerald-600',
-  blue:    'from-blue-400 to-blue-500',
+  blue: 'from-blue-400 to-blue-500',
 }
 
 function trendIcon(trend: string) {
@@ -97,7 +98,7 @@ export default function StudentProfilePage() {
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:8000/api/students/${id}/profile`)
+        const res = await fetch(`${API_BASE}/api/students/${id}/profile`)
         if (res.ok) {
           const data = await res.json()
           if (data.status === 'success') {
@@ -172,19 +173,23 @@ export default function StudentProfilePage() {
 
   // Performance trend bars from real history (chronological: oldest → newest)
   const chronological = [...score_history].reverse()
-  const maxScore = 100
-  const barData = chronological.map(h => ({
-    height: `${Math.max(5, (h.score / maxScore) * 100)}%`,
-    score: h.score,
-    label: formatDate(h.submitted_at),
-  }))
+  const maxScore = 10
+  const barData = chronological.map(h => {
+    const s10 = h.score <= 10 ? h.score : h.score / 10
+    return {
+      height: `${Math.max(5, (s10 / maxScore) * 100)}%`,
+      score: s10,
+      label: formatDate(h.submitted_at),
+    }
+  })
 
   // SVG path for the trend line
   const svgWidth = 1000
   const svgHeight = 200
   const svgPoints = chronological.map((h, i) => {
+    const s10 = h.score <= 10 ? h.score : h.score / 10
     const x = chronological.length > 1 ? (i / (chronological.length - 1)) * svgWidth : svgWidth / 2
-    const y = svgHeight - (h.score / maxScore) * svgHeight
+    const y = svgHeight - (s10 / maxScore) * svgHeight
     return `${x},${y}`
   })
   const trendPath = svgPoints.length > 1 ? `M${svgPoints.join(' L')}` : ''
@@ -214,7 +219,7 @@ export default function StudentProfilePage() {
                 Student Performance
               </h1>
               <p className="text-frost-muted text-base">
-                {summary.total_submissions} submissions · Average {summary.average_score.toFixed(1)}% · Grade {summary.cumulative_grade}
+                {summary.total_submissions} submissions · Average {(summary.average_score <= 10 ? summary.average_score : summary.average_score / 10).toFixed(1)}/10 · Grade {summary.cumulative_grade}
               </p>
             </div>
             <div className="flex gap-3">
@@ -248,8 +253,8 @@ export default function StudentProfilePage() {
                 <svg className="absolute inset-0 w-full h-full opacity-40" preserveAspectRatio="none" viewBox={`0 0 ${svgWidth} ${svgHeight}`}>
                   <defs>
                     <linearGradient id="line-grad" x1="0%" x2="100%" y1="0%" y2="0%">
-                      <stop offset="0%" style={{stopColor: '#8083ff', stopOpacity: 0.2}} />
-                      <stop offset="100%" style={{stopColor: '#c0c1ff', stopOpacity: 1}} />
+                      <stop offset="0%" style={{ stopColor: '#8083ff', stopOpacity: 0.2 }} />
+                      <stop offset="100%" style={{ stopColor: '#c0c1ff', stopOpacity: 1 }} />
                     </linearGradient>
                   </defs>
                   <path d={trendPath} fill="none" stroke="url(#line-grad)" strokeWidth="3" />
@@ -264,16 +269,15 @@ export default function StudentProfilePage() {
                   return (
                     <div key={i} className="relative flex-1 flex flex-col items-center">
                       <div
-                        className={`w-full max-w-[32px] rounded-t transition-all duration-500 mx-auto ${
-                          isRecent
+                        className={`w-full max-w-[32px] rounded-t transition-all duration-500 mx-auto ${isRecent
                             ? 'bg-violet-primary/60 shadow-[0_0_10px_rgba(192,193,255,0.3)]'
                             : 'bg-surface-container-highest/80'
-                        }`}
+                          }`}
                         style={{ height: bar.height }}
                       >
                         {isLast && (
                           <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-violet-primary text-obsidian text-[10px] font-bold px-2 py-0.5 rounded font-mono whitespace-nowrap">
-                            {bar.score.toFixed(0)}%
+                            {bar.score.toFixed(1)}/10
                           </div>
                         )}
                       </div>
@@ -321,11 +325,11 @@ export default function StudentProfilePage() {
                   <div className="group" key={skill.topic_tag}>
                     <div className="flex justify-between mb-2">
                       <span className="text-sm font-medium text-frost">{skill.topic_tag}</span>
-                      <span className="text-sm font-mono text-violet-primary font-medium">{(skill.avg_score / 10).toFixed(1)}/10</span>
+                      <span className="text-sm font-mono text-violet-primary font-medium">{(skill.avg_score <= 10 ? skill.avg_score : skill.avg_score / 10).toFixed(1)}/10</span>
                     </div>
                     <div className="w-full h-2 bg-surface-container-highest rounded-full overflow-hidden">
                       <div
-                        style={{ width: `${Math.min(100, skill.avg_score)}%` }}
+                        style={{ width: `${Math.min(100, (skill.avg_score <= 10 ? skill.avg_score * 10 : skill.avg_score))}%` }}
                         className={`h-full ${SKILL_COLORS[i % SKILL_COLORS.length]} rounded-full transition-all duration-500 group-hover:brightness-110`}
                       />
                     </div>
@@ -361,11 +365,11 @@ export default function StudentProfilePage() {
               </div>
               <div>
                 <p className="text-xs text-frost-muted mb-1">Best Score</p>
-                <div className="text-2xl font-bold font-mono text-emerald-trust">{summary.best_score.toFixed(1)}</div>
+                <div className="text-2xl font-bold font-mono text-emerald-trust">{(summary.best_score <= 10 ? summary.best_score : summary.best_score / 10).toFixed(1)}/10</div>
               </div>
               <div>
                 <p className="text-xs text-frost-muted mb-1">Score Range</p>
-                <div className="text-2xl font-bold font-mono text-frost">{summary.worst_score.toFixed(0)}–{summary.best_score.toFixed(0)}</div>
+                <div className="text-2xl font-bold font-mono text-frost">{(summary.worst_score <= 10 ? summary.worst_score : summary.worst_score / 10).toFixed(1)}–{(summary.best_score <= 10 ? summary.best_score : summary.best_score / 10).toFixed(1)}</div>
               </div>
 
               {/* Achievement badges */}
@@ -418,10 +422,11 @@ export default function StudentProfilePage() {
                 </thead>
                 <tbody>
                   {score_history.map((record, i) => {
+                    const s10 = record.score <= 10 ? record.score : record.score / 10
                     const scoreColor =
-                      record.score >= 90 ? 'text-emerald-trust' :
-                      record.score >= 70 ? 'text-violet-primary' :
-                      record.score >= 50 ? 'text-yellow-400' : 'text-coral'
+                      s10 >= 9 ? 'text-emerald-trust' :
+                        s10 >= 7 ? 'text-violet-primary' :
+                          s10 >= 5 ? 'text-yellow-400' : 'text-coral'
                     return (
                       <tr key={i} className="border-b border-outline-variant/5 hover:bg-surface-container-highest/30 transition-colors">
                         <td className="py-3 px-6 font-mono text-frost-muted text-xs">{String(i + 1).padStart(2, '0')}</td>
@@ -431,7 +436,7 @@ export default function StudentProfilePage() {
                             {record.topic_tag || 'General'}
                           </span>
                         </td>
-                        <td className={`py-3 px-6 text-right font-mono font-bold ${scoreColor}`}>{record.score.toFixed(1)}</td>
+                        <td className={`py-3 px-6 text-right font-mono font-bold ${scoreColor}`}>{s10.toFixed(1)}/10</td>
                         <td className="py-3 px-6 text-right text-frost-muted text-xs">{formatDate(record.submitted_at)}</td>
                       </tr>
                     )

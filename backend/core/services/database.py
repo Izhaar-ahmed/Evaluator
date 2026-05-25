@@ -135,6 +135,8 @@ class Database:
             "dbname": os.getenv("DB_NAME", "evaluator"),
             "user": os.getenv("DB_USER", "postgres"),
             "password": os.getenv("DB_PASSWORD", "postgres"),
+            "sslmode": os.getenv("DB_SSLMODE", "prefer"),  # Render/Neon: set to "require"
+            "connect_timeout": 10,
         }
         self._conn = None
         self._initialized = False

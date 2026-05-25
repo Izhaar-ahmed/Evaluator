@@ -154,6 +154,100 @@ def _is_noise(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# LLM-Powered Concept Refinement (Groq)
+# ---------------------------------------------------------------------------
+
+def llm_refine_concepts(
+    candidates: List[str],
+    transcript_snippet: str,
+    fallback_count: int = 10,
+) -> List[str]:
+    """
+    Use Groq LLM to filter TF-IDF candidates to only genuinely
+    teachable lecture concepts. Returns a dynamic-length list.
+
+    Args:
+        candidates: TF-IDF candidate terms (typically 20).
+        transcript_snippet: First ~1500 chars of transcript for context.
+        fallback_count: Number of candidates to return if LLM fails.
+
+    Returns:
+        Filtered list of real concepts (typically 5-15).
+    """
+    import os
+    import json
+
+    if not os.getenv("GROQ_API_KEY") or not os.getenv("LLM_ENABLED", "false").lower() == "true":
+        print("  ⚠ LLM not available for concept refinement — using TF-IDF top candidates")
+        return candidates[:fallback_count]
+
+    if not candidates:
+        return []
+
+    prompt = f"""You are an academic concept extractor analyzing a lecture transcript.
+
+Given these candidate terms extracted from a lecture, return ONLY the ones that are genuine, 
+teachable technical/academic concepts that a student should demonstrate understanding of.
+
+REMOVE:
+- Generic words that appear in any lecture (e.g., "data set", "classified", "precision", "value") 
+  UNLESS they are a CORE TOPIC of THIS specific lecture
+- Vague terms that aren't real concepts (e.g., "multiple", "threshold", "conventional")
+- Near-duplicates — keep only the more specific one
+
+KEEP:
+- Actual algorithms, techniques, methods (e.g., "supervised learning", "random forest")
+- Domain-specific terminology (e.g., "feature extraction", "cross validation")
+- Key principles or frameworks being taught
+
+Return ONLY a valid JSON array of strings. No explanation, no markdown.
+Return as many or as few as are genuinely important (typically 5-12 for a 30-60 minute lecture).
+
+Candidate terms: {json.dumps(candidates)}
+
+Transcript snippet (for context):
+{transcript_snippet[:1500]}"""
+
+    try:
+        import asyncio
+        from utils.llm_service import _call_groq
+
+        loop = asyncio.new_event_loop()
+        messages = [{"role": "user", "content": prompt}]
+        raw_response = loop.run_until_complete(_call_groq(messages, max_tokens=300))
+        loop.close()
+
+        # Parse JSON array from response
+        # Handle potential markdown wrapping
+        cleaned = raw_response.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1]
+            cleaned = cleaned.rsplit("```", 1)[0]
+        cleaned = cleaned.strip()
+
+        refined = json.loads(cleaned)
+
+        if isinstance(refined, list) and len(refined) >= 3:
+            # Only keep terms that were in the original candidates (prevent hallucination)
+            candidates_lower = {c.lower() for c in candidates}
+            validated = [c for c in refined if c.lower() in candidates_lower]
+
+            if len(validated) >= 3:
+                print(f"  ✓ LLM refined {len(candidates)} candidates → {len(validated)} real concepts: {validated}")
+                return validated
+            else:
+                print(f"  ⚠ LLM returned too few valid concepts ({len(validated)}), using TF-IDF top {fallback_count}")
+                return candidates[:fallback_count]
+        else:
+            print(f"  ⚠ LLM returned invalid format, using TF-IDF top {fallback_count}")
+            return candidates[:fallback_count]
+
+    except Exception as e:
+        print(f"  ⚠ LLM concept refinement failed ({e}), using TF-IDF top {fallback_count}")
+        return candidates[:fallback_count]
+
+
+# ---------------------------------------------------------------------------
 # TF-IDF Keyword Extraction (zero LLM)
 # ---------------------------------------------------------------------------
 
@@ -192,28 +286,83 @@ def extract_concepts(clean_text: str, top_n: int = 20) -> List[str]:
     for sw in STOPWORDS:
         word_counts.pop(sw, None)
 
-    # Remove very common lecture filler words + math formula noise
+    # Remove very common lecture filler words + generic English
     fillers = {
+        # Lecture interaction / classroom
         "class", "today", "going", "will", "come", "look", "lets",
         "explain", "understand", "question", "answer", "discuss",
         "slide", "slides", "page", "click", "share", "screen",
         "minutes", "wait", "tell", "told", "says", "check",
         "particular", "available", "different", "important",
         "basically", "mentioned", "certain", "everything",
-        # Math formula noise
-        "divided", "plus", "minus", "times", "equal", "equals",
-        "ratio", "value", "values", "number", "numbers",
-        "zero", "hundred", "percent", "percentage",
-        # Lecture interaction noise
         "student", "students", "everybody", "everyone", "anybody",
-        "professor", "teacher", "learning", "learned",
-        # Common weak verbs that aren't concepts
+        "professor", "teacher", "learned",
+        # Common lecture filler / vague words
+        "whatever", "something", "anything", "nothing", "things",
+        "thing", "stuff", "like", "just", "also", "actually",
+        "really", "always", "never", "often", "sometimes",
+        "many", "much", "some", "every", "each", "other",
+        "such", "more", "most", "less", "very", "quite",
+        "already", "still", "even", "right", "left", "next",
+        "first", "second", "third", "last", "another", "same",
+        "new", "old", "big", "small", "high", "low",
+        "good", "bad", "best", "worst", "better", "worse",
+        "able", "way", "ways", "part", "parts", "case", "cases",
+        "point", "points", "example", "examples", "kind", "type",
+        "types", "form", "forms", "level", "levels", "area", "areas",
+        "place", "side", "fact", "idea", "ideas", "order",
+        "step", "steps", "process", "system", "group", "set",
+        # Generic verbs / actions (not concepts)
         "uses", "shows", "gives", "takes", "means", "gets",
         "called", "require", "requires", "required", "needs",
         "build", "built", "building", "creates", "created",
         "define", "defined", "defines", "execute", "executed",
         "result", "results", "output", "outputs", "input", "inputs",
         "applied", "apply", "shown", "given", "taken",
+        "make", "made", "making", "start", "started", "keep",
+        "try", "trying", "tried", "want", "wanted", "need",
+        "know", "known", "knowing", "think", "thought",
+        "see", "seen", "seeing", "say", "said", "saying",
+        "work", "works", "working", "worked", "run", "running",
+        "use", "used", "using", "write", "writing", "written",
+        "read", "reading", "find", "finding", "found",
+        "put", "putting", "move", "moving", "change", "changed",
+        "help", "helping", "helped", "provide", "provided",
+        "consider", "considered", "based", "play", "playing",
+        # Math / number noise
+        "divided", "plus", "minus", "times", "equal", "equals",
+        "ratio", "value", "values", "number", "numbers",
+        "zero", "hundred", "percent", "percentage",
+        "division", "multiple", "single", "double", "total",
+        "half", "quarter", "above", "below",
+        # Generic academic / non-specific terms
+        "method", "methods", "approach", "approaches",
+        "problem", "problems", "solution", "solutions",
+        "technique", "techniques", "concept", "concepts",
+        "practice", "practices", "principle", "principles",
+        "general", "specific", "simple", "complex",
+        "common", "basic", "standard", "main", "major",
+        "real", "true", "false", "possible", "actual",
+        "term", "terms", "word", "words", "line", "lines",
+        "table", "column", "row", "rows", "field", "fields",
+        "section", "chapter", "topic", "topics",
+        # Transition / connector words
+        "however", "therefore", "hence", "thus", "also",
+        "moreover", "furthermore", "although", "though",
+        "because", "since", "while", "whereas", "whether",
+        "either", "neither", "both", "between", "among",
+        "through", "within", "without", "across", "along",
+        "around", "before", "after", "during", "until",
+        # Pronouns / determiners that slip through
+        "this", "that", "these", "those", "which",
+        "what", "where", "when", "how", "why", "who",
+        "here", "there", "then", "now",
+        # Threshold / generic measurement words
+        "threshold", "range", "limit", "limits", "size",
+        "count", "length", "width", "height", "depth",
+        "rate", "score", "scores", "measure", "measures",
+        "amount", "quantity", "condition", "conditions",
+        "conventional",
     }
     for f in fillers:
         word_counts.pop(f, None)

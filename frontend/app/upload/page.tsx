@@ -6,7 +6,7 @@ import AppNavbar from '@/components/AppNavbar'
 import FileUpload, { type FileUploadData } from '@/components/FileUpload'
 import { ResultsStore, type EvaluationResponse } from '@/lib/results-store'
 
-const API_BASE_URL = 'http://127.0.0.1:8000'
+import { API_BASE } from '@/lib/api'
 
 export default function UploadPage() {
   const router = useRouter()
@@ -16,7 +16,13 @@ export default function UploadPage() {
 
   const handleFileUploadSubmit = async (data: FileUploadData) => {
     setLoading(true)
-    setMessage('Connecting to evaluation engine...')
+    const fileCount = data.files.length
+    const estMinutes = Math.max(1, Math.ceil(fileCount / 20))
+    setMessage(
+      fileCount > 10
+        ? `Evaluating ${fileCount} submissions — estimated ${estMinutes}-${estMinutes + 2} minutes. Please don't close this tab.`
+        : 'Connecting to evaluation engine...'
+    )
     setMessageType('info')
 
     try {
@@ -47,7 +53,7 @@ export default function UploadPage() {
         formData.append('transcript_text', data.transcriptText)
       }
 
-      const res = await fetch(`${API_BASE_URL}/api/evaluate`, {
+      const res = await fetch(`${API_BASE}/api/evaluate`, {
         method: 'POST',
         body: formData,
       })

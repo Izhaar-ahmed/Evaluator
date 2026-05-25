@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import StudentNavbar from '@/components/StudentNavbar'
 import { AuthStore } from '@/lib/auth-store'
+import { API_BASE } from '@/lib/api'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -148,7 +149,7 @@ export default function AICoachPage() {
       return
     }
 
-    AuthStore.fetchAuth('http://127.0.0.1:8000/api/portal/chat/status')
+    AuthStore.fetchAuth(`${API_BASE}/api/portal/chat/status`)
       .then(r => r.json())
       .then(d => setStatus(d))
       .catch(() => setStatus({ available: false, backend: 'none', model: '' }))
@@ -294,7 +295,7 @@ export default function AICoachPage() {
     }))
 
     await streamResponse(
-      'http://127.0.0.1:8000/api/portal/chat',
+      `${API_BASE}/api/portal/chat`,
       { message: msg, conversation_history: conversationHistory },
       userMsg,
     )
@@ -313,7 +314,7 @@ export default function AICoachPage() {
     }
 
     await streamResponse(
-      'http://127.0.0.1:8000/api/portal/improvement-plan',
+      `${API_BASE}/api/portal/improvement-plan`,
       {},
       userMsg,
     )
@@ -436,11 +437,10 @@ export default function AICoachPage() {
                     <span className="material-symbols-outlined text-white text-sm">psychology</span>
                   </div>
                 )}
-                <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-                  msg.role === 'user'
+                <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${msg.role === 'user'
                     ? 'bg-violet-primary/90 text-white rounded-br-md'
                     : 'bg-surface-container-low border border-outline-variant/10 text-frost-muted rounded-bl-md'
-                }`}>
+                  }`}>
                   {msg.role === 'assistant' ? (
                     <div className="text-sm leading-relaxed">
                       {renderMarkdown(msg.content)}

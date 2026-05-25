@@ -1,6 +1,19 @@
 import csv
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+def _clean_student_name(raw_name: str) -> str:
+    """
+    Strip Moodle metadata and _Result suffix from student names.
+    'Deeksha Suresh_34567_Result' → 'Deeksha Suresh'
+    'student_alice_Result' → 'student_alice'
+    """
+    name = raw_name.replace("_Result", "")
+    # Strip Moodle ID: Name_34567 → Name
+    name = re.sub(r'_\d{4,6}$', '', name)
+    return name.strip()
 
 
 def export_results_to_csv(
@@ -37,7 +50,7 @@ def export_results_to_csv(
     # Prepare rows
     rows = []
     for student_name, evaluation in results.items():
-        clean_name = student_name.replace("_Result", "")
+        clean_name = _clean_student_name(student_name)
 
         # Score is already /10 from backend
         score_10 = evaluation.get("final_score", 0)
@@ -87,23 +100,34 @@ def export_results_to_csv(
 def _build_clean_feedback(evaluation: Dict[str, Any]) -> str:
     """
     Build clean, actionable feedback from evaluation data.
-    No markdown, no emojis — just clear teacher-style comments.
+    Uses the actual combined_feedback (including LLM analysis) when available,
+    strips emojis/markdown for CSV-clean output.
     """
+    combined = evaluation.get("combined_feedback", [])
+
+    if combined and isinstance(combined, list) and len(combined) > 0:
+        # Use the real feedback — strip markdown bold and emojis for CSV
+        cleaned_parts = []
+        for line in combined:
+            if not isinstance(line, str):
+                continue
+            # Strip markdown bold markers
+            clean = line.replace("**", "")
+            # Strip common emojis used in feedback
+            for emoji in ["🏆", "✅", "📝", "⚠️", "❌", "💪", "📋", "🎯", "🤖", "→"]:
+                clean = clean.replace(emoji, "")
+            # Collapse whitespace
+            clean = " ".join(clean.split()).strip()
+            if clean:
+                cleaned_parts.append(clean)
+        if cleaned_parts:
+            return " | ".join(cleaned_parts)
+
+    # Fallback: build from score/coverage if combined_feedback is empty
     parts = []
     score = evaluation.get("final_score", 0)
     coverage = evaluation.get("concept_coverage", 0)
-    word_count = evaluation.get("word_count", 0)
 
-    # Extract matched/missing topics from combined_feedback
-    matched_topics = ""
-    missing_topics = ""
-    for fb in evaluation.get("combined_feedback", []):
-        if "Topics covered:" in fb:
-            matched_topics = fb.split("Topics covered:")[-1].strip()
-        if "Missing topics:" in fb:
-            missing_topics = fb.split("Missing topics:")[-1].strip()
-
-    # Overall assessment
     if score >= 8:
         parts.append("Excellent summary — demonstrates strong understanding of the lecture content.")
     elif score >= 6.5:
@@ -115,37 +139,12 @@ def _build_clean_feedback(evaluation: Dict[str, Any]) -> str:
     else:
         parts.append("Poor submission — does not reflect the lecture content.")
 
-    # Coverage detail
     if coverage >= 70:
         parts.append(f"Strong topic coverage ({round(coverage)}%).")
     elif coverage >= 40:
         parts.append(f"Moderate topic coverage ({round(coverage)}%).")
     else:
         parts.append(f"Low topic coverage ({round(coverage)}%). Review the key lecture topics.")
-
-    # What they covered well
-    if matched_topics:
-        parts.append(f"Covered: {matched_topics}.")
-
-    # What they missed
-    if missing_topics:
-        parts.append(f"Missing: {missing_topics}.")
-
-    # Length feedback
-    if word_count < 30:
-        parts.append("Summary is too short — aim for at least 80-100 words.")
-    elif word_count > 200:
-        parts.append("Summary is too long — keep it concise at 100-120 words.")
-
-    # Depth advice
-    depth_score = 0
-    for fb in evaluation.get("combined_feedback", []):
-        if "surface-level" in fb.lower():
-            parts.append("Try to explain why topics are important, not just list them.")
-            break
-        elif "explain *why*" in fb.lower():
-            parts.append("Include brief explanations of how concepts connect.")
-            break
 
     return " | ".join(parts)
 
@@ -184,7 +183,7 @@ def export_results_to_detailed_csv(
 
     rows = []
     for student_name, evaluation in results.items():
-        clean_name = student_name.replace("_Result", "")
+        clean_name = _clean_student_name(student_name)
         score_10 = evaluation.get("final_score", 0)
         concept_coverage = evaluation.get("concept_coverage", 0)
         matched = evaluation.get("matched_concepts", 0)

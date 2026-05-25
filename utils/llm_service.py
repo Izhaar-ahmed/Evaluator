@@ -1,399 +1,427 @@
 import os
 import json
-import google.generativeai as genai
-from typing import List, Optional, Dict, Any
+import httpx
+import asyncio
+import time
+import nest_asyncio
+from typing import Optional
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
+nest_asyncio.apply()  # Allows nested event loops — prevents crash on Render/production
 
-# Lazy import for local SLM fallback
-_local_slm_instance = None
+# ─────────────────────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────────────────────
 
-def _get_local_slm():
-    """Get the local SLM service (lazy singleton)."""
-    global _local_slm_instance
-    if _local_slm_instance is None:
-        try:
-            from utils.local_slm_service import LocalSLMService
-            _local_slm_instance = LocalSLMService()
-        except ImportError:
-            _local_slm_instance = False  # Mark as unavailable
-    return _local_slm_instance if _local_slm_instance is not False else None
+GROQ_API_KEY       = os.getenv("GROQ_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+GROQ_URL           = "https://api.groq.com/openai/v1/chat/completions"
+OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
+
+GROQ_MODEL         = "llama-3.1-8b-instant"
+OPENROUTER_MODEL   = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+
+
+# ─────────────────────────────────────────────────────────────
+# RATE LIMITER — prevents Groq 429 errors
+# ─────────────────────────────────────────────────────────────
+
+class _RateLimiter:
+    """
+    Simple rate limiter for API calls.
+    Ensures we never exceed Groq's 30 requests/minute limit.
+    Uses 25 req/min for safety buffer.
+    """
+    def __init__(self, calls_per_minute: int = 25):
+        self.min_interval = 60.0 / calls_per_minute  # ~2.4 seconds
+        self.last_call_time = 0.0
+
+    async def wait(self):
+        now = time.monotonic()
+        elapsed = now - self.last_call_time
+        wait_time = self.min_interval - elapsed
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
+        self.last_call_time = time.monotonic()
+
+    def wait_sync(self):
+        now = time.monotonic()
+        elapsed = now - self.last_call_time
+        wait_time = self.min_interval - elapsed
+        if wait_time > 0:
+            time.sleep(wait_time)
+        self.last_call_time = time.monotonic()
+
+
+# Shared limiters
+_groq_limiter = _RateLimiter(calls_per_minute=25)
+_openrouter_limiter = _RateLimiter(calls_per_minute=20)
+
+
+# ─────────────────────────────────────────────────────────────
+# CORE API CALLER — GROQ (with rate limiting + 429 retry)
+# ─────────────────────────────────────────────────────────────
+
+async def _call_groq(messages: list, max_tokens: int = 500) -> str:
+    """Calls Groq API with rate limiting. Retries once on 429."""
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY not set in .env")
+
+    await _groq_limiter.wait()
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            GROQ_URL,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": GROQ_MODEL,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": 0.3
+            },
+            timeout=30
+        )
+
+        # Handle rate limit — wait and retry once
+        if response.status_code == 429:
+            print("[Groq] Rate limited — waiting 15s and retrying...")
+            await asyncio.sleep(15)
+            _groq_limiter.last_call_time = time.monotonic()
+            response = await client.post(
+                GROQ_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": GROQ_MODEL,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.3
+                },
+                timeout=30
+            )
+
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
+
+
+# ─────────────────────────────────────────────────────────────
+# CORE API CALLER — OPENROUTER (NVIDIA NEMOTRON)
+# ─────────────────────────────────────────────────────────────
+
+async def _call_openrouter(messages: list, max_tokens: int = 200) -> str:
+    """
+    Calls OpenRouter API using NVIDIA Nemotron free model.
+    Used for: relevance checks only. Rate limited.
+    """
+    if not OPENROUTER_API_KEY:
+        raise ValueError("OPENROUTER_API_KEY not set in .env")
+
+    await _openrouter_limiter.wait()
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://evaluator.app",
+                "X-Title": "Evaluator 2.0"
+            },
+            json={
+                "model": OPENROUTER_MODEL,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": 0.1
+            },
+            timeout=40
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        message = data["choices"][0]["message"]
+
+        # Try all possible fields Nemotron might use
+        content = (
+            message.get("content")              # standard OpenAI format
+            or message.get("reasoning_content")  # Nemotron-specific
+            or message.get("reasoning")           # some reasoning models
+            or ""
+        )
+
+        if content and content.strip():
+            return content.strip()
+
+        raise ValueError(f"Empty response from Nemotron. Full message: {message}")
+
+
+# ─────────────────────────────────────────────────────────────
+# 1. RELEVANCE CHECK  →  OpenRouter (NVIDIA Nemotron free)
+# ─────────────────────────────────────────────────────────────
+
+async def _check_relevance_async(
+    submission: str, problem_statement: str
+) -> dict:
+    prompt = f"""You are an academic evaluator checking if a student submission answers the problem.
+
+Problem Statement:
+{problem_statement}
+
+Student Submission (first 1000 characters):
+{submission[:1000]}
+
+Reply with ONLY a JSON object:
+{{"verdict": "RELEVANT", "reason": "brief one-line reason"}}
+
+Rules for verdict:
+- RELEVANT   → submission clearly answers the problem
+- PARTIAL    → submission is related but incomplete
+- UNCERTAIN  → cannot determine relevance confidently
+- IRRELEVANT → submission is completely unrelated"""
+
+    try:
+        raw = await _call_openrouter(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150
+        )
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        # Normalize whitespace/newlines inside JSON
+        raw = " ".join(raw.split())
+
+        start = raw.find("{")
+        end   = raw.rfind("}") + 1
+
+        if start != -1 and end > start:
+            json_str = raw[start:end]
+            parsed  = json.loads(json_str)
+            verdict = parsed.get("verdict", "UNCERTAIN").upper().strip()
+            if verdict not in ["RELEVANT", "PARTIAL", "UNCERTAIN", "IRRELEVANT"]:
+                verdict = "UNCERTAIN"
+            return {"verdict": verdict, "reason": parsed.get("reason", "")}
+
+        # Regex fallback — look for verdict keyword
+        import re
+        match = re.search(r'"verdict"\s*:\s*"(RELEVANT|PARTIAL|UNCERTAIN|IRRELEVANT)"', raw, re.IGNORECASE)
+        if match:
+            return {"verdict": match.group(1).upper(), "reason": "Parsed from partial response"}
+
+        print(f"[OpenRouter] Could not extract JSON from: {raw[:200]}")
+        return {"verdict": "UNCERTAIN", "reason": "Could not parse model response"}
+
+    except httpx.TimeoutException:
+        print("[OpenRouter] Request timed out — returning UNCERTAIN")
+        return {"verdict": "UNCERTAIN", "reason": "Request timed out"}
+    except Exception as e:
+        print(f"[OpenRouter] Relevance check failed: {e}")
+        return {"verdict": "UNCERTAIN", "reason": "LLM unavailable"}
+
+
+# ─────────────────────────────────────────────────────────────
+# 2. FEEDBACK GENERATION  →  Groq (llama-3.1-8b-instant)
+# ─────────────────────────────────────────────────────────────
+
+async def _generate_feedback_async(
+    submission: str,
+    problem_statement: str,
+    score: float,
+    assignment_type: str = "code"
+) -> str:
+    system_msg = """You are a warm, experienced university professor who genuinely cares about student growth. You write feedback the way top educators do — conversational, specific, and encouraging. Never use bullet points, numbered lists, or section headers like "Summary:" or "Strengths:". Instead, write naturally flowing paragraphs, as if you're sitting across from the student explaining your thoughts.
+
+Your feedback should feel like a personal note, not a rubric checklist. Reference specific parts of their work. Be honest but kind — students should feel motivated to improve, not discouraged."""
+
+    user_msg = f"""Here's a student's {assignment_type} submission for the assignment: "{problem_statement}"
+
+Their automated score is {score:.1f} out of 100.
+
+--- STUDENT SUBMISSION ---
+{submission[:1000]}
+--- END ---
+
+Write 3-4 sentences of personalized feedback. Start by noting something specific you observed in their work (good or bad). Then naturally mention what they did well and what they should focus on improving. End with an encouraging thought that makes them want to try harder next time.
+
+Keep it under 150 words. Write in second person ("you"). Sound human — like a professor who just read their paper, not like an AI."""
+
+    try:
+        return await _call_groq(
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg}
+            ],
+            max_tokens=350
+        )
+    except Exception as e:
+        print(f"[Groq] Feedback generation failed: {e}")
+        return _rule_based_feedback(score, assignment_type)
+
+
+# ─────────────────────────────────────────────────────────────
+# 3. CHATBOT  →  Groq (llama-3.1-8b-instant)
+# ─────────────────────────────────────────────────────────────
+
+async def chat_with_student(
+    conversation_history: list,
+    system_prompt: str = None
+) -> str:
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    else:
+        messages.append({
+            "role": "system",
+            "content": (
+                "You are a helpful academic assistant for students using the Evaluator platform. "
+                "You help students understand their scores, improve their code, and learn concepts. "
+                "Keep responses clear, concise, and student-friendly. "
+                "If asked about scores or feedback, explain them in simple terms. "
+                "For programming questions, give short code examples when helpful."
+            )
+        })
+    messages.extend(conversation_history)
+
+    try:
+        return await _call_groq(messages=messages, max_tokens=500)
+    except Exception as e:
+        print(f"[Groq] Chatbot failed: {e}")
+        return "I'm having trouble connecting right now. Please try again in a moment."
+
+
+# ─────────────────────────────────────────────────────────────
+# 4. RULE-BASED FALLBACK  →  No API needed
+# ─────────────────────────────────────────────────────────────
+
+def _rule_based_feedback(score: float, assignment_type: str) -> str:
+    """Conversational fallback when Groq is unavailable."""
+    if score >= 80:
+        return (
+            "Your submission shows a solid understanding of the problem and a well-structured approach. "
+            "The core logic is implemented correctly, which is great to see. "
+            "To push this further, consider adding inline comments explaining your reasoning, "
+            "and think about how your solution handles edge cases. Keep up the excellent work!"
+        )
+    elif score >= 60:
+        return (
+            "You've made a decent attempt here and clearly understand the core concept. "
+            "Some parts of your implementation could use more attention — re-read the problem "
+            "statement carefully and make sure every requirement is addressed. "
+            "Testing with a few edge cases will help you catch the gaps. You're on the right track."
+        )
+    elif score >= 40:
+        return (
+            "I can see you've put effort into this, but the core approach needs some rework. "
+            "Try starting with the simplest possible solution that works, then build from there. "
+            "Make sure your output format matches exactly what's expected. "
+            "Don't hesitate to look at similar examples for reference — that's how we all learn."
+        )
+    else:
+        return (
+            "This submission doesn't quite address the problem as stated. "
+            "Take another look at the requirements and try to break the problem into smaller steps. "
+            "Focus on getting a basic version working first — even a partial solution that handles "
+            "the main case is a great starting point. You've got this, just give it another shot."
+        )
+
+
+# ─────────────────────────────────────────────────────────────
+# LLMService CLASS WRAPPER
+# (backward-compatible with existing agents that use LLMService)
+# ─────────────────────────────────────────────────────────────
 
 class LLMService:
     """
-    Service wrapper for LLM-based semantic feedback.
-    
-    Priority chain:
-    1. Google Gemini API (cloud, fast, rate-limited)
-    2. Local Phi-3 Mini SLM (offline, free, slower)
-    3. Rule-based feedback (always works, no AI)
-    
-    Role: Semantic Assistant ONLY. Does not assign scores.
+    Class wrapper for backward compatibility.
+    Agents call: self.llm_service.check_relevance(...)
     """
 
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY")
         self.enabled = os.getenv("LLM_ENABLED", "false").lower() == "true"
-        self.model_name = os.getenv("LLM_MODEL", "gemini-2.0-flash")
-        self._client = None
-        self._setup_done = False
-        self._rate_limited = False  # Track if we're in a cooldown period
-        self._consecutive_failures = 0
-        self._max_failures_before_disable = 3  # Disable after 3 consecutive failures
-        self._use_local_slm = os.getenv("USE_LOCAL_SLM", "true").lower() == "true"
-
-    def _ensure_setup(self):
-        """Lazy initialization of the Gemini client."""
-        if self._setup_done or not self.enabled:
-            return
-
-        if not self.api_key:
-            print("WARNING: LLM_ENABLED is true but GEMINI_API_KEY is missing. Disabling LLM.")
-            self.enabled = False
-            return
-
-        try:
-            genai.configure(api_key=self.api_key)
-            self._client = genai.GenerativeModel(self.model_name)
-            self._setup_done = True
-            print(f"✓ LLM service initialized with model: {self.model_name} (key: ...{self.api_key[-6:]})")
-        except Exception as e:
-            print(f"WARNING: Failed to initialize Gemini: {e}. Disabling LLM.")
-            self.enabled = False
-            self._setup_done = True
-
-    def generate_semantic_feedback(
-        self, 
-        context_type: str, 
-        submission_content: str, 
-        rubric_context: str, 
-        deterministic_findings: List[str],
-        missing_concepts: List[str] = None,
-        relevance_status: str = "UNCERTAIN"
-    ) -> List[str]:
-        """
-        Generate qualitative feedback based on deterministic findings.
-        
-        Uses Gemini API for feedback generation (higher quality).
-        Falls back to local Phi-3 Mini SLM only if Gemini is unavailable.
-        
-        Args:
-            context_type: "code" or "content"
-            submission_content: The student's code or text.
-            rubric_context: Relevant parts of the rubric.
-            deterministic_findings: List of strings like "Found 3 functions".
-            missing_concepts: List of missing keywords to be explained semantically.
-
-        Returns:
-            List of feedback strings. Returns empty list on failure or if disabled.
-        """
-        if not self.enabled:
-            return []
-
-        # ── Try Gemini first (best quality feedback) ──
-        self._ensure_setup()
-        
-        models_to_try = [self.model_name, "gemini-2.0-flash", "gemini-flash-latest", "gemini-2.5-flash", "gemini-pro-latest"]
-        models_to_try = list(dict.fromkeys(m for m in models_to_try if m))
-        
-        last_error = ""
-        for model in models_to_try:
-            try:
-                client = genai.GenerativeModel(model)
-                prompt = self._build_prompt(context_type, submission_content, rubric_context, deterministic_findings, missing_concepts, relevance_status)
-                response = client.generate_content(prompt)
-                
-                if response.text:
-                    print(f"✓ Gemini ({model}) generated feedback successfully")
-                    lines = [line.strip() for line in response.text.split("\n") if line.strip()]
-                    return lines if lines else [response.text.strip()]
-                
-                continue
-
-            except Exception as e:
-                last_error = str(e)
-                continue
-
-        # ── Fallback: Local Phi-3 Mini SLM if Gemini is completely unavailable ──
-        print(f"⚠ Gemini feedback failed ({last_error[:80]}). Trying local SLM fallback...")
-        if self._use_local_slm:
-            local_slm = _get_local_slm()
-            if local_slm and local_slm.available:
-                print("⚡ Using local Phi-3 SLM for feedback (Gemini fallback)")
-                try:
-                    return local_slm.generate_semantic_feedback(
-                        context_type, submission_content, rubric_context,
-                        deterministic_findings, missing_concepts, relevance_status
-                    )
-                except Exception as e:
-                    print(f"⚠ Local SLM feedback also failed: {e}")
-
-        print(f"WARNING: All feedback models failed. Last error: {last_error}. Falling back to rule-based feedback.")
-        return []
-
-    def _build_prompt(
-        self, 
-        context_type: str, 
-        submission: str, 
-        rubric: str, 
-        findings: List[str],
-        missing: List[str] = None,
-        relevance_status: str = "UNCERTAIN"
-    ) -> str:
-        findings_str = "\n".join(f"- {f}" for f in findings)
-        missing_str = ", ".join(missing) if missing else "None"
-
-        if relevance_status == "IRRELEVANT":
-            relevance_instructions = """
-1. Format your response into these exact sections:
-    **Summary**: State clearly that the submission is irrelevant to the assigned problem. Briefly mention what their code/text actually does (as context).
-    
-    **Corrections Needed**: 
-    - DO NOT critique the student's code for style, comments, or naming. It is irrelevant.
-    - INSTEAD, provide a comprehensive "How to Solve the Assigned Problem" guide.
-    - Include high-level Pseudo-code and logical steps for the ACTUAL assigned task.
-    - Be a mentor: help them understand the problem they missed.
-    
-    **Strengths**: Mention 1 minor technical strength of their code (syntax/structure) ONLY if it exists, otherwise omit this section.
-"""
-        else:
-            relevance_instructions = """
-1. Format your response into these exact sections:
-    **Summary**: [Brief 1-sentence explanation of what the code/content is trying to do]
-    
-    **Corrections Needed**: [A detailed paragraph explaining conceptual gaps. Behave like a patient, cool teacher. When pointing out issues like missing comments or structure, give precise examples of where and how they should write them. e.g., "you need to write comments right before your loops explaining X like this..."]
-    
-    **Strengths**: [1-3 concise lines highlighting what was done well]
-"""
-        
-        base_prompt = f"""
-You are a helpful Teaching Assistant explaining evaluation results.
-Your goal is to explain the following evaluation results and findings to a student.
-DO NOT assign a score. The score has already been determined by the system.
-DO NOT change weights or grading criteria.
-DO NOT invent new criteria. Focus ONLY on the provided context.
-Only explain based on provided facts and findings.
-
-Context: {context_type.upper()} Assignment
-Rubric/Criteria used:
-{rubric}
-
-Automated Findings (Facts that determine the score):
-{findings_str}
-
-Missing Concepts (Keywords to explain):
-{missing_str}
-
-Student Submission (for context):
-{submission[:4000]}
-
-MANDATORY INSTRUCTIONS:
-{relevance_instructions}
-
-2. Explain logically WHY the findings lead to the evaluation result.
-3. Rewrite missing concepts as a semantic explanation.
-4. Keep feedback encouraging but technical.
-5. Start directly with the output content (no "Here is...").
-6. Do NOT use markdown headers like "##". Use bold keys exactly as provided (e.g., "**Summary**:").
-
-"""
-        return base_prompt
 
     def check_relevance(
         self,
         problem_statement: str,
         submission_content: str,
         context_type: str = "code"
+    ) -> dict:
+        """Synchronous relevance check — wraps async call."""
+        if not self.enabled:
+            return {"verdict": "UNCERTAIN", "reason": "LLM disabled"}
+
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(
+                    _check_relevance_async(submission_content, problem_statement)
+                )
+            finally:
+                loop.close()
+        except Exception as e:
+            print(f"[LLMService] check_relevance error: {e}")
+            return {"verdict": "UNCERTAIN", "reason": str(e)}
+
+    def generate_semantic_feedback(
+        self,
+        submission: str = "",
+        problem_statement: str = "",
+        score: float = 0,
+        assignment_type: str = "code",
+        # Old-style keyword args from agents:
+        context_type: str = "",
+        submission_content: str = "",
+        rubric_context: str = "",
+        deterministic_findings: list = None,
+        missing_concepts: list = None,
+        **kwargs
     ) -> str:
-        """
-        Ask LLM if the submission is relevant to the problem.
-
-        Args:
-            problem_statement: The task description.
-            submission_content: Student's code or text.
-            context_type: "code" or "content".
-
-        Returns:
-            "RELEVANT" if submission genuinely attempts to solve the problem.
-            "PARTIAL" if submission shows some understanding but incomplete/off-track.
-            "IRRELEVANT" if completely unrelated or wrong problem.
-            "UNCERTAIN" if LLM failed or disabled (fail-closed for safety).
+        """Synchronous feedback generation — wraps async call.
+        
+        Accepts both new-style (submission, problem_statement, score) and
+        old-style (submission_content, rubric_context, deterministic_findings) args.
         """
         if not self.enabled:
-            return "UNCERTAIN"
+            fb = _rule_based_feedback(score, assignment_type or context_type or "code")
+            return [fb] if isinstance(fb, str) else fb
 
-        self._ensure_setup()
+        # Normalize: old callers use submission_content, new callers use submission
+        actual_submission = submission_content or submission
+        actual_type = context_type or assignment_type
+
+        # Build a combined problem context from rubric + deterministic findings
+        problem_parts = []
+        if problem_statement:
+            problem_parts.append(problem_statement)
+        if rubric_context:
+            problem_parts.append(f"Rubric: {rubric_context[:300]}")
+        if deterministic_findings:
+            if isinstance(deterministic_findings, list):
+                problem_parts.append("Analysis findings: " + "; ".join(str(f) for f in deterministic_findings[:5]))
+            else:
+                problem_parts.append(f"Analysis: {str(deterministic_findings)[:300]}")
+        if missing_concepts:
+            problem_parts.append(f"Missing concepts: {', '.join(str(c) for c in missing_concepts[:10])}")
         
-        prompt = f"""
-You are an expert evaluator for an automated grading system.
-Your task is to determine if the {context_type} submission GENUINELY ATTEMPTS to solve the specific problem described.
+        combined_problem = "\n".join(problem_parts) if problem_parts else "General evaluation"
 
-Problem Statement:
-{problem_statement[:1500]}
-
-Submission:
-{submission_content[:3000]}
-
-CRITICAL EVALUATION RULES:
-1. **Identify the Core Logic Requirement**: What is the unique algorithmic or conceptual task? (e.g., "Implement a Trie", "Calculate GCD", "Summarize Photosynthesis").
-2. **Identify the Submission's Actual Logic**: What does this code/text actually do?
-3. **Ignore Superficial Similarities**: DO NOT be fooled by:
-    - Common programming terms (`int`, `vector`, `List`, `return`).
-    - Standard boilerplate templates.
-    - Matching words that are used in a different context.
-4. **Verdicts**:
-    - **IRRELEVANT**: If the submission is for a different problem, is just boilerplate, or contains no logic related to the core task.
-    - **PARTIAL**: If the submission shows some understanding of the problem domain but is incomplete, significantly off-track, or only addresses a small part.
-    - **RELEVANT**: If the submission shows a clear attempt to solve the specific problem, even if it has bugs or is unfinished.
-    - **UNCERTAIN**: Only if you genuinely cannot determine relevance from the provided information.
-
-Response Format:
-Reasoning: [1-2 sentences explaining the core logic mismatch or match]
-Verdict: [RELEVANT/PARTIAL/IRRELEVANT/UNCERTAIN]
-"""
-        max_retries = 2
-        for attempt in range(max_retries):
+        try:
+            loop = asyncio.new_event_loop()
             try:
-                # Use the configured model
-                client = genai.GenerativeModel(self.model_name or "gemini-2.0-flash")
-                response = client.generate_content(prompt)
-                
-                if not response.text:
-                    continue
-                    
-                text = response.text.strip().upper()
-                
-                # Parse verdict with priority on the "Verdict: " prefix
-                if "VERDICT: RELEVANT" in text or "VERDICT:RELEVANT" in text:
-                    return "RELEVANT"
-                if "VERDICT: PARTIAL" in text or "VERDICT:PARTIAL" in text:
-                    return "PARTIAL"
-                if "VERDICT: IRRELEVANT" in text or "VERDICT:IRRELEVANT" in text:
-                    return "IRRELEVANT"
-                if "VERDICT: UNCERTAIN" in text or "VERDICT:UNCERTAIN" in text:
-                    return "UNCERTAIN"
-                
-                # Loose fallback - look for standalone verdict words
-                if "RELEVANT" in text and "IRRELEVANT" not in text and "PARTIAL" not in text:
-                    return "RELEVANT"
-                if "IRRELEVANT" in text:
-                    return "IRRELEVANT"
-                if "PARTIAL" in text:
-                    return "PARTIAL"
-                    
-            except Exception as e:
-                err_str = str(e)
-                self._consecutive_failures += 1
-                if "429" in err_str or "quota" in err_str.lower():
-                    self._rate_limited = True
-                    print(f"LLM Relevance Check: rate limited. Returning UNCERTAIN.")
-                else:
-                    print(f"LLM Relevance Check failed: {e}")
-                
-                if self._consecutive_failures >= self._max_failures_before_disable:
-                    print(f"WARNING: {self._consecutive_failures} consecutive LLM failures. Disabling for this session.")
-                    self.enabled = False
-                continue
-        
-        # ── Fallback to Local SLM ──
-        if self._use_local_slm:
-            local_slm = _get_local_slm()
-            if local_slm and local_slm.available:
-                print("⟳ Gemini failed → falling back to local Phi-3 SLM for relevance check")
-                try:
-                    return local_slm.check_relevance(problem_statement, submission_content, context_type)
-                except Exception as e:
-                    print(f"⚠ Local SLM relevance check also failed: {e}")
-
-        # CRITICAL: If ALL LLMs fail, ALWAYS return UNCERTAIN — NEVER IRRELEVANT.
-        # Returning IRRELEVANT on failure would unfairly crush student scores.
-        return "UNCERTAIN"
-
-    def parse_rubric_text(self, text: str) -> Optional[Dict[str, Any]]:
-        """
-        Uses LLM to convert a plain text rubric description into the structured 
-        RubricConfig JSON dictionary format expected by the system.
-        """
-        if not self.enabled:
-            return None
-            
-        self._ensure_setup()
-        
-        rubric_schema = """
-        {
-            "name": "Custom Extracted Rubric",
-            "version": "1.0",
-            "dimensions": {
-                "code": {
-                    "weight": [float between 0 and 1],
-                    "max_score": 100,
-                    "criteria": {
-                        "criterion1": {"weight": [float], "max_score": 100}
-                    }
-                },
-                "content": {
-                    "weight": [float between 0 and 1],
-                    "max_score": 100,
-                    "criteria": {
-                        "criterion1": {"weight": [float], "max_score": 100}
-                    }
-                }
-            }
-        }
-        """
-        
-        prompt = f"""
-        You are an AI tasked with converting a plain text grading rubric into a strict JSON configuration.
-        
-        The output must strictly be a VALID JSON object matching this general structure:
-        {rubric_schema}
-        
-        Rules:
-        1. Analyze the text to find evaluation dimensions and their respective weights.
-        2. Sum of weights for all dimensions at the top level should ideally equal 1.0 (e.g. code: 0.6, content: 0.4).
-        3. Within each dimension, create a 'criteria' dictionary based on the text. The sum of criteria weights within a dimension should equal 1.0.
-        4. If a dimension is completely omitted from the text, omit it from the JSON. If the user only provides criteria without weights, assign equal weights.
-        5. Return ONLY the raw JSON string. Do not use Markdown formatting like ```json. Do not include any explanations.
-        
-        User Text to Parse:
-        {text}
-        """
-        
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                client = genai.GenerativeModel(self.model_name or "gemini-2.0-flash")
-                response = client.generate_content(prompt)
-                
-                if not response.text:
-                    continue
-                    
-                # Clean up any potential markdown formatting
-                json_str = response.text.strip()
-                if json_str.startswith("```json"):
-                    json_str = json_str[7:]
-                if json_str.startswith("```"):
-                    json_str = json_str[3:]
-                if json_str.endswith("```"):
-                    json_str = json_str[:-3]
-                    
-                json_str = json_str.strip()
-                parsed = json.loads(json_str)
-                return parsed
-            except Exception as e:
-                print(f"LLM Rubric Parsing failed: {e}")
-                continue
-        
-        # ── Fallback to Local SLM ──
-        if self._use_local_slm:
-            local_slm = _get_local_slm()
-            if local_slm and local_slm.available:
-                print("⟳ Gemini failed → falling back to local Phi-3 SLM for rubric parsing")
-                try:
-                    return local_slm.parse_rubric_text(text)
-                except Exception as e:
-                    print(f"⚠ Local SLM rubric parsing also failed: {e}")
-
-        return None
+                result = loop.run_until_complete(
+                    _generate_feedback_async(
+                        actual_submission, combined_problem, score, actual_type
+                    )
+                )
+            finally:
+                loop.close()
+            # Agents expect a list of strings — wrap if needed
+            if isinstance(result, str):
+                return [result]
+            return result
+        except Exception as e:
+            print(f"[LLMService] generate_semantic_feedback error: {e}")
+            fb = _rule_based_feedback(score, actual_type)
+            return [fb] if isinstance(fb, str) else fb
