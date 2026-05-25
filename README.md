@@ -3,9 +3,8 @@
   <img src="https://img.shields.io/badge/FastAPI-0.100+-009688?style=for-the-badge&logo=fastapi&logoColor=white" />
   <img src="https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js&logoColor=white" />
   <img src="https://img.shields.io/badge/PostgreSQL-15-336791?style=for-the-badge&logo=postgresql&logoColor=white" />
-  <img src="https://img.shields.io/badge/Gemini_AI-2.0-8E75B2?style=for-the-badge&logo=google&logoColor=white" />
-  <img src="https://img.shields.io/badge/Ollama-Local_SLM-FF6B35?style=for-the-badge&logo=ollama&logoColor=white" />
-  <img src="https://img.shields.io/badge/Phi--3_Mini-Offline-00D4AA?style=for-the-badge&logo=microsoft&logoColor=white" />
+  <img src="https://img.shields.io/badge/Groq-LLaMA_3.1-F55036?style=for-the-badge&logo=meta&logoColor=white" />
+  <img src="https://img.shields.io/badge/OpenRouter-Nemotron-76B900?style=for-the-badge&logo=nvidia&logoColor=white" />
   <img src="https://img.shields.io/badge/JWT-Auth-FB015B?style=for-the-badge&logo=jsonwebtokens&logoColor=white" />
   <img src="https://img.shields.io/badge/Transcript_Eval-VTT_Parser-E91E63?style=for-the-badge&logo=audioboom&logoColor=white" />
 </p>
@@ -14,7 +13,7 @@
 <h3 align="center">Intelligent AI-Powered Academic Assessment Platform</h3>
 
 <p align="center">
-  <em>An end-to-end system for evaluating student code, content, and lecture transcript summaries using AST analysis, LLM reasoning (cloud + offline), semantic embeddings, automated test execution, plagiarism detection, and real-time student performance tracking — with a multi-tier AI fallback chain (Gemini → Ollama Phi-3 → rule-based), intelligent single-file mixed evaluation, and batch transcript summary scoring against VTT lecture transcripts, managed through role-based teacher and student dashboards with JWT authentication.</em>
+  <em>An end-to-end system for evaluating student code, content, and lecture transcript summaries using AST analysis, LLM reasoning, semantic embeddings, automated test execution, plagiarism detection, and real-time student performance tracking — with a multi-agent scoring pipeline (CodeAgent, ContentAgent, AggregatorAgent), LLM-powered dynamic concept extraction, and an AI Study Coach, all managed through role-based teacher and student dashboards with JWT authentication.</em>
 </p>
 
 <p align="center">
@@ -42,21 +41,23 @@
 5.  [Transcript Evaluation: Scoring Lecture Summaries](#-transcript-evaluation-scoring-lecture-summaries)
 6.  [Tree-Sitter: How Code is Structurally Analyzed](#-tree-sitter-how-code-is-structurally-analyzed)
 7.  [Semantic Embeddings: Understanding Meaning, Not Just Keywords](#-semantic-embeddings-understanding-meaning-not-just-keywords)
-8.  [LLM Integration: Multi-Tier AI Fallback Chain](#-llm-integration-multi-tier-ai-fallback-chain)
-9.  [Offline SLM: Ollama + Phi-3 Mini](#-offline-slm-ollama--phi-3-mini)
-10. [Test Case Execution: Verifying Code Correctness](#-test-case-execution-verifying-code-correctness)
-11. [Integrity System: Plagiarism & AI Detection](#-integrity-system-plagiarism--ai-detection)
-12. [Review Queue: Human-in-the-Loop](#-review-queue-human-in-the-loop)
-13. [Student Profile Tracking](#-student-profile-tracking)
-14. [Frontend: The Teacher Dashboard](#-frontend-the-teacher-dashboard)
-15. [Frontend: The Student Portal](#-frontend-the-student-portal)
+8.  [LLM Integration: Groq + OpenRouter](#-llm-integration-groq--openrouter)
+9.  [Test Case Execution: Verifying Code Correctness](#-test-case-execution-verifying-code-correctness)
+10. [Integrity System: Plagiarism & AI Detection](#-integrity-system-plagiarism--ai-detection)
+11. [Review Queue: Human-in-the-Loop](#-review-queue-human-in-the-loop)
+12. [Student Profile Tracking](#-student-profile-tracking)
+13. [Frontend: The Teacher Dashboard](#-frontend-the-teacher-dashboard)
+14. [Frontend: The Student Portal](#-frontend-the-student-portal)
+15. [AI Study Coach](#-ai-study-coach)
 16. [Authentication & Role-Based Access](#-authentication--role-based-access)
-17. [API Reference](#-api-reference)
-18. [Project Structure](#-project-structure)
-19. [How to Run](#-how-to-run)
-20. [Environment Variables](#-environment-variables)
-21. [Tech Stack](#-tech-stack)
-22. [Common Questions](#-common-questions)
+17. [CSV Export System](#-csv-export-system)
+18. [API Reference](#-api-reference)
+19. [Project Structure](#-project-structure)
+20. [How to Run (Local Development)](#-how-to-run-local-development)
+21. [Deployment (Render + Vercel)](#-deployment-render--vercel)
+22. [Environment Variables](#-environment-variables)
+23. [Tech Stack](#-tech-stack)
+24. [Common Questions](#-common-questions)
 
 ---
 
@@ -69,20 +70,21 @@
 3. **Checks relevance** — does the submission actually answer the question?
 4. **Scores** based on approach, readability, structure, and effort
 5. **Detects plagiarism** between students and flags AI-generated content
-6. **Generates detailed, personalized feedback** for each student
+6. **Generates detailed, personalized feedback** for each student using Groq LLaMA 3.1
 7. **Tracks student progress** over time with percentiles and trends
 8. **Routes uncertain submissions** to a manual review queue for the teacher
 9. **Evaluates lecture transcript summaries** — students summarize a VTT lecture, and the system scores coverage, depth, and expression using batch semantic embeddings
+10. **Provides an AI Study Coach** — students can chat with an AI tutor that knows their weak areas
 
-The system is **NOT** a simple keyword counter. It combines multiple AI techniques:
+The system combines multiple AI techniques:
 - **Tree-sitter** for understanding code structure at the syntax level
-- **Sentence-transformers** for understanding meaning through embeddings
-- **Google Gemini** for semantic reasoning and natural language feedback (cloud)
-- **Ollama + Phi-3 Mini** for offline AI feedback on Apple Silicon GPU (local)
+- **Sentence-transformers** (all-MiniLM-L6-v2) for understanding meaning through embeddings
+- **Groq LLaMA 3.1 8B** for fast feedback generation and concept refinement
+- **OpenRouter NVIDIA Nemotron** for code relevance checks
 - **GPT-2 perplexity** for detecting AI-generated submissions
 - **Judge0 / Local execution** for actually running code against test cases
 - **Auto-split parser** for single-file mixed submissions (code + explanation in one file)
-- **VTT transcript parser** for batch-scoring student summaries against lecture transcripts
+- **VTT transcript parser** with LLM-refined dynamic concept extraction
 
 ---
 
@@ -92,21 +94,22 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
 |---|---|---|
 | 🧠 **AST-Aware Scoring** | Understands code structure (loops, functions, nesting) | Tree-sitter |
 | 🧪 **Test Case Execution** | Runs student code against test inputs/outputs | Judge0 API + Local Python/C++ fallback |
-| 💬 **AI Feedback** | Generates personalized, learning-oriented comments | Gemini 2.0 Flash + Ollama Phi-3 fallback |
-| 🔍 **Relevance Checking** | Verifies submission actually answers the question | Multi-tier LLM (Gemini → Phi-3 → rule-based) |
+| 💬 **AI Feedback** | Generates personalized, learning-oriented comments | Groq LLaMA 3.1 8B Instant |
+| 🔍 **Relevance Checking** | Verifies submission actually answers the question | OpenRouter NVIDIA Nemotron |
 | 🕵️ **Plagiarism Detection** | Compares submissions using fingerprinting + similarity | SequenceMatcher + Fingerprinting |
 | 🤖 **AI Content Detection** | Flags likely AI-generated submissions | GPT-2 Perplexity Analysis |
 | 📊 **Semantic Scoring** | Understands paraphrased content, not just keywords | all-MiniLM-L6-v2 Embeddings |
 | 📈 **Student Tracking** | Performance history, trends, percentile ranking | PostgreSQL + NumPy |
-| 👨‍🏫 **Review Queue** | Teacher reviews flagged/uncertain submissions | In-memory + DB queue |
+| 👨‍🏫 **Review Queue** | Teacher reviews flagged/uncertain submissions | DB + in-memory queue |
 | 🌙 **Dark-Mode Dashboard** | Beautiful, enterprise-grade teacher UI | Next.js 14 + Tailwind CSS |
 | 🎓 **Student Portal** | Personal dashboard, submissions, progress, leaderboard | JWT Auth + Role-based routing |
+| 🤝 **AI Study Coach** | Streaming chat tutor aware of student's weak areas | Groq LLaMA 3.1 + streaming responses |
 | 🔐 **JWT Authentication** | Role-based access control (teacher/student) | PyJWT + SHA-256 |
-| 📄 **Single-File Mixed Eval** | One file with code + explanation → auto-split and evaluate both | Language-aware parser (Python/Text/PDF) |
-| 🔌 **Offline SLM** | Zero API cost, runs locally on Apple Silicon GPU | Ollama + Phi-3 Mini (Q4_K_M, 2.2GB) |
-| 🎙 **Transcript Evaluation** | Score student summaries against VTT lecture transcripts | Batch embeddings + TF-IDF concept extraction |
-| 📊 **Batch Processing** | Evaluate 120+ students in ~60s using batch-encoded embeddings | all-MiniLM-L6-v2 + NumPy |
-| 📥 **CSV Export** | Export results with /10 scores, feedback, and student summary text | Custom CSV with clean feedback |
+| 📄 **Single-File Mixed Eval** | One file with code + explanation → auto-split | Language-aware parser |
+| 🎙 **Transcript Evaluation** | Score summaries against VTT lecture transcripts | Batch embeddings + LLM-refined concepts |
+| 📊 **Batch Processing** | Evaluate 120+ students using batch-encoded embeddings | all-MiniLM-L6-v2 + NumPy |
+| 📥 **CSV Export** | Export results with /10 scores, rich LLM feedback | Custom CSV with real AI feedback |
+| 🚀 **Cloud Deployment** | Production-ready on Render + Vercel + Neon | Environment-based configuration |
 
 ---
 
@@ -123,9 +126,10 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
 │       │            │             │                  │               │
 │  ┌────▼────────────────────────────────────────────────────────────┐│
 │  │  STUDENT PORTAL                                                 ││
-│  │  ┌──────────┐ ┌────────────┐ ┌──────────┐ ┌──────────────────┐ ││
-│  │  │Dashboard │ │Submissions │ │ Progress │ │   Leaderboard    │ ││
-│  │  └──────────┘ └────────────┘ └──────────┘ └──────────────────┘ ││
+│  │  ┌──────────┐ ┌────────────┐ ┌──────────┐ ┌────────┐ ┌──────┐ ││
+│  │  │Dashboard │ │Submissions │ │ Progress │ │Leader  │ │Coach │ ││
+│  │  │          │ │            │ │          │ │board   │ │(Chat)│ ││
+│  │  └──────────┘ └────────────┘ └──────────┘ └────────┘ └──────┘ ││
 │  └────────────────────────────────────────────────────────────────┘│
 └───────┼──────────────┼─────────────┼──────────────────┼────────────┘
         │              │             │                  │
@@ -134,7 +138,7 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
 │  POST /api/auth/login      POST /api/evaluate                       │
 │  GET  /api/portal/*        GET  /api/evaluations/history            │
 │  GET  /api/reviews         POST /api/reviews/:id/override           │
-│  GET  /api/students/:id/profile                                     │
+│  GET  /api/students/:id    POST /api/portal/chat (streaming)        │
 └───────┬─────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -145,20 +149,19 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
 │   │            │    │             │    │                    │      │
 │   │ • AST      │    │ • Keywords  │    │ • Weighted average │      │
 │   │ • Approach │    │ • Embeddings│    │ • Normalization    │      │
-│   │ • Readabi. │    │ • Coverage  │    │ • Score curving    │      │
-│   │ • Structur.│    │ • Alignment │    │                    │      │
-│   │ • Effort   │    │ • Flow      │    └────────────────────┘      │
+│   │ • Readabi. │    │ • Factual   │    │ • Score curving    │      │
+│   │ • Structur.│    │ • Coverage  │    │                    │      │
+│   │ • Effort   │    │ • Alignment │    └────────────────────┘      │
 │   └──────┬─────┘    └──────┬──────┘                                │
 │          │                 │                                        │
 │   ┌──────▼─────────────────▼──────┐                                │
 │   │        SHARED SERVICES        │                                │
-│   │ • LLM Service (Multi-tier)    │    ┌─────────────────────────┐ │
-│   │   ├─ Gemini API (cloud)       │    │   INTEGRITY SERVICE     │ │
-│   │   ├─ Ollama Phi-3 (local GPU) │    │ • Plagiarism detection  │ │
-│   │   └─ llama-cpp (direct GGUF)  │    │ • AI content detection  │ │
-│   │ • Tree-sitter Parser          │    │ • Perplexity scoring    │ │
-│   │ • Embedding Service           │    └────────────┬────────────┘ │
-│   │ • Judge0 / Local Runner       │                                │
+│   │ • LLM Service                 │    ┌─────────────────────────┐ │
+│   │   ├─ Groq (LLaMA 3.1 8B)     │    │   INTEGRITY SERVICE     │ │
+│   │   └─ OpenRouter (Nemotron)    │    │ • Plagiarism detection  │ │
+│   │ • Tree-sitter Parser          │    │ • AI content detection  │ │
+│   │ • Embedding Service           │    │ • Perplexity scoring    │ │
+│   │ • Judge0 / Local Runner       │    └────────────┬────────────┘ │
 │   │ • Rubric Manager              │                                │
 │   │ • File Parser (auto-split)    │                                │
 │   └───────────────────────────────┘                                │
@@ -176,11 +179,11 @@ The system is **NOT** a simple keyword counter. It combines multiple AI techniqu
         │
         ▼
 ┌─────────────────────── DATA LAYER ──────────────────────────────────┐
-│  PostgreSQL          In-Memory Fallback        File System          │
+│  PostgreSQL (Neon)     In-Memory Fallback        File System        │
 │  • evaluation_results  • review queue           • CSV exports       │
 │  • review_queue        • submission index       • embedding cache   │
 │  • student_scores      • users (auth)                               │
-│  • evaluation_batches                                               │
+│  • submission_index                                                  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -195,9 +198,11 @@ When a teacher uploads student submissions, the system processes them through a 
 **Where**: `backend/app/routes/evaluate.py` → `backend/core/controller/orchestrator.py`
 
 The teacher uploads one or more files (`.py`, `.cpp`, `.txt`, etc.) through the web interface along with:
-- **Assignment type**: `code`, `content`, or `mixed`
-- **Problem statement**: The question that was asked (e.g., "Write a function to find all triplets that sum to zero")
+- **Assignment type**: `code`, `content`, `mixed`, or `transcript`
+- **Problem statement**: The question that was asked
 - **Test cases** (optional): JSON array like `[{"input": "1 2 3", "output": "6"}]`
+- **Lecture transcript** (for transcript mode): A `.vtt` file
+- **Topic tag** (optional): For tracking student progress by subject
 
 The system:
 1. Saves uploaded files to a temporary folder
@@ -205,19 +210,11 @@ The system:
 3. Extracts the student name from the filename (e.g., `student_alice.py` → `student_alice`)
 4. Routes to the appropriate evaluation agent based on assignment type
 
-```python
-# Example: How files are parsed (simplified)
-submissions = read_folder("/tmp/uploads_abc123/")
-# Returns: {"student_alice.py": "class Solution:\n  def threeSum(self, nums)...", ...}
-```
-
 ### Step 1a: Single-File Mixed Evaluation (Auto-Split)
 
-**Where**: `backend/core/utils/file_parser.py` → `split_mixed_content()` + `_auto_split_single_files()`
+**Where**: `backend/core/utils/file_parser.py` → `split_mixed_content()`
 
 In traditional mixed mode, students submit two files — one for code, one for explanation. But many students prefer to put everything in **one file**. Evaluator 2.0 handles this automatically:
-
-**The system detects when a student submits a single file for mixed evaluation and intelligently splits it into code and content streams:**
 
 | Input File Type | Code Extracted From | Content Extracted From |
 |---|---|---|
@@ -226,40 +223,13 @@ In traditional mixed mode, students submit two files — one for code, one for e
 | `.txt` / `.md` | Fenced code blocks (` ``` `) + indented blocks → Code Agent | Everything else (prose) → Content Agent |
 | `.pdf` | Fenced code blocks from extracted text → Code Agent | Prose sections → Content Agent |
 
-**How it works internally:**
-
-1. `_auto_split_single_files()` detects that only one submission category has files
-2. `split_mixed_content()` dispatches to the appropriate language-specific splitter:
-   - `_split_python()`: Extracts docstrings (triple-quoted strings at the start of functions/classes) and standalone comment blocks
-   - `_split_cpp()`: Extracts `/* ... */` block comments and consecutive `// ...` line comments
-   - `_split_text()`: Uses regex to find fenced code blocks (` ```python ... ``` `) and 4-space indented blocks
-3. A virtual file entry is created: e.g., `student_ravi.py` → creates `student_ravi.txt` (content) and keeps `student_ravi.py` (code)
-4. Both agents receive their respective portions seamlessly
-
-```python
-# Example: A single Python file with docstrings
-def binary_search(arr, target):
-    """
-    Binary search divides a sorted array in half repeatedly.
-    Time complexity: O(log n). Space: O(1) for iterative.
-    """
-    left, right = 0, len(arr) - 1
-    while left <= right:
-        mid = (left + right) // 2
-        if arr[mid] == target: return mid
-    return -1
-
-# Code Agent receives: the full file (for AST parsing)
-# Content Agent receives: "Binary search divides a sorted array..."
-```
-
 > **No student action required**: Students don't need to format their files in any special way. The parser handles Python docstrings, C++ block comments, and markdown code fences automatically.
 
 ### Step 2: LLM Relevance Check
 
 **Where**: `utils/llm_service.py` → `check_relevance()`
 
-Before scoring anything, the system asks **Google Gemini AI**: *"Does this submission actually answer the question that was asked?"*
+Before scoring anything, the system asks **OpenRouter NVIDIA Nemotron**: *"Does this submission actually answer the question that was asked?"*
 
 The LLM returns one of **four verdicts**:
 
@@ -268,12 +238,9 @@ The LLM returns one of **four verdicts**:
 | `RELEVANT` | Yes, this answers the question | Full scoring (no penalty) |
 | `PARTIAL` | Somewhat related but incomplete | Reduced scoring (0.6x multiplier) |
 | `UNCERTAIN` | AI isn't confident | Score as normal (no penalty) |
-| `IRRELEVANT` | Completely off-topic | Approach score = 0, other scores × 0.3 |
+| `IRRELEVANT` | Completely off-topic | Approach score = 0, other scores × 0.1 |
 
 > **Why UNCERTAIN ≠ IRRELEVANT**: When the LLM can't decide (e.g., API is rate-limited), it would be unfair to penalize the student. The system gives the benefit of the doubt and scores normally. Only a confident `IRRELEVANT` verdict triggers penalties.
-
-If the LLM is available, it also generates rich semantic feedback like:
-> *"**Summary**: This code implements a two-pointer approach on a sorted array to find all unique triplets. **Corrections Needed**: Add comments before your duplicate-skipping logic..."*
 
 ### Step 3: Code Evaluation (Code Agent)
 
@@ -283,45 +250,47 @@ This is the core scoring engine for code submissions. It evaluates **four dimens
 
 #### 3a. Approach Score (40% weight)
 
-Measures how well the student's code solves the problem.
+Measures how well the student's code solves the problem using three strategies:
 
-**Three strategies are used (best score wins):**
-
-1. **Function Name Matching**: The system uses tree-sitter to extract function names from the code. If a function name matches a keyword from the problem statement (e.g., `threeSum` matches "threeSum" in the problem), it scores 90-100.
-
+1. **Function Name Matching**: Tree-sitter extracts function names from the code. If a function name matches a keyword from the problem statement (e.g., `threeSum` matches "threeSum" in the problem), it scores 90-100.
 2. **Keyword Overlap**: Extracts meaningful keywords from the problem statement (5+ characters, excluding stopwords) and checks how many appear in the code.
-
 3. **LLM Verdict**: If the LLM confirmed `RELEVANT`, the approach score is boosted.
 
-```python
-# Example: Function name matching
-problem = "Write a function for threeSum"
-code_function_names = ["threeSum"]  # extracted via tree-sitter
-# "threeSum" appears in problem → approach_score = 95
+**If test cases are provided:**
+```
+approach = 0.4 × relevance_score + 0.6 × test_pass_rate
+```
+
+**Score floor from tests:**
+```
+If student passes 80% of tests but has messy code:
+  test_floor = test_pass_rate × 90 (max 90)
+  total_score = max(total_score, test_floor)
+```
+Working code > pretty code. If the code WORKS, it shouldn't get a low score just because variable names aren't perfect.
+
+**Wrong-problem cap:**
+```
+If LLM says IRRELEVANT: total_score = min(total_score, 25)
 ```
 
 #### 3b. Readability Score (20% weight)
-
-Measures how easy the code is to read:
-- **Line length**: Are lines under 80 characters? (good practice)
-- **Comments**: Does the code have explanatory comments?
-- **LLM feedback**: If Gemini is available, adds suggestions for improving readability
+- Line length (are lines under 80 characters?)
+- Comments and docstrings present?
+- Naming conventions (camelCase, snake_case consistency)
+- Type hints (Python), const usage (C++)
 
 #### 3c. Structure Score (20% weight)
-
-Measures code organization using tree-sitter AST analysis:
-- **Number of functions/classes**: Good code is modular
-- **Variable assignments**: Shows structured logic
-- **Nesting depth**: Deep nesting (5+ levels) shows algorithmic complexity
-- **Control flow**: Counts loops, conditions, error handling
+- Number of functions/classes (modularity)
+- Variable assignments (structured logic)
+- Nesting depth (deep nesting shows algorithmic complexity)
+- Control flow (loops, conditions, error handling)
 
 #### 3d. Effort Score (20% weight)
-
-Measures the amount of work put in:
-- **Lines of code**: More than 20 lines → decent effort
-- **Unique identifiers**: Diverse variable names show thoughtful coding
-- **Nesting complexity**: Deep nesting takes more effort to write
-- **Complexity score**: The tree-sitter composite score (0-100)
+- Lines of code (minimum viable effort)
+- Unique identifiers (diverse variable names)
+- Nesting complexity (takes more effort to write)
+- Tree-sitter composite complexity score (0-100)
 
 ```
 Final Code Score = approach × 0.40 + readability × 0.20 + structure × 0.20 + effort × 0.20
@@ -331,21 +300,23 @@ Final Code Score = approach × 0.40 + readability × 0.20 + structure × 0.20 + 
 
 **Where**: `backend/core/agents/content_agent.py`
 
-For written submissions (essays, reports, PPT text), the system evaluates **four dimensions**:
+For written submissions, the system evaluates **five dimensions**:
 
 | Dimension | Weight | What It Measures |
 |---|---|---|
-| **Coverage** | 60% | Does the submission cover the key concepts from the prompt? |
-| **Alignment** | 25% | Does it meet the rubric's learning objectives and required sections? |
+| **Factual Accuracy** | 40% | Semantic similarity to ideal reference answer (embedding cosine similarity) |
+| **Coverage** | 30% | Does it mention key concepts from the reference? (keyword + semantic) |
+| **Alignment** | 15% | Does it meet the problem statement requirements? |
 | **Flow** | 8% | Is the writing logically organized with transitions? |
-| **Completeness** | 7% | Is it detailed enough? Does it include examples and evidence? |
+| **Completeness** | 7% | Is it detailed enough? Does it include examples? |
 
 **Coverage scoring uses two methods in parallel:**
-
 1. **Keyword matching** (always available): Checks if key terms appear in the text
-2. **Semantic embeddings** (if sentence-transformers is installed): Uses AI to understand that "binary search tree" and "BST" mean the same thing
+2. **Semantic embeddings** (if sentence-transformers is installed): Uses all-MiniLM-L6-v2 to understand that "binary search tree" and "BST" mean the same thing
 
-The final coverage score is: `max(keyword_score × 0.5, semantic_score)` — this prevents students from gaming the system by stuffing keywords, while rewarding those who genuinely paraphrase concepts.
+**Special rules:**
+- If coverage = 0 AND LLM says irrelevant → **score = 0** (off-topic submission)
+- If plagiarism detected → **capped at 20/100**
 
 ### Step 5: Test Case Execution (Judge0 / Local)
 
@@ -353,41 +324,24 @@ The final coverage score is: `max(keyword_score × 0.5, semantic_score)` — thi
 
 If the teacher provides test cases, the system **actually runs the student's code** against them.
 
-**Execution strategy:**
-
 ```
-1. Is Judge0 (code execution API) reachable?
-   ├── YES → Submit code to Judge0 API for sandboxed execution
-   └── NO → Is the code Python?
-             ├── YES → Run locally via subprocess (sandboxed)
-             └── NO  → Skip test execution (only static analysis)
-```
-
-**LeetCode-style auto-wrapping:**
-
-Many students write code in class format (like LeetCode):
-```python
-class Solution:
-    def threeSum(self, nums):
-        # ... algorithm ...
+Test cases provided?
+├── NO  → Skip test execution (static analysis only)
+└── YES → Is it a "class Solution" pattern?
+          ├── YES (Python) → Auto-wrap with stdin parser + method caller
+          ├── YES (C++)    → Auto-wrap with #include headers + main() generator
+          └── NO           → Run code as-is
+          ↓
+          Is Judge0 reachable? (HTTP ping to /about endpoint)
+          ├── YES → Submit to Judge0 API (sandboxed, supports all languages)
+          └── NO  → Is the language Python?
+                    ├── YES → Run locally via Python subprocess
+                    └── NO  → Is the language C++?
+                              ├── YES → Compile with g++ -std=c++17 and run locally
+                              └── NO  → Skip test execution
 ```
 
-This code doesn't produce output when run directly. The system detects this pattern and **automatically generates a wrapper**:
-```python
-# Auto-generated wrapper:
-import sys, json
-_raw_input = sys.stdin.read().strip()
-_args = _parse_input(_raw_input)  # Tries JSON, space-separated, comma-separated
-sol = Solution()
-_result = sol.threeSum(*_args[:1])
-print(_result)
-```
-
-This means test cases work even with class-based submissions.
-
-**Test score impact:**
-
-The test pass rate (0-100%) is added to the approach score calculation. If tests pass at 100%, it boosts the score. If tests fail, it reduces the score.
+**LeetCode-style auto-wrapping** works for both Python and C++. The system detects `class Solution` patterns and automatically generates test harness code.
 
 ### Step 6: Score Aggregation
 
@@ -396,13 +350,12 @@ The test pass rate (0-100%) is added to the approach score calculation. If tests
 The Aggregator Agent combines all individual agent outputs into a final score:
 
 1. **Normalize** each agent's score to 0-100 scale
-2. **Apply weights** from the rubric (default: code = 60%, content = 40%)
-3. **Apply learning-oriented normalization**: A gentle curve that pushes scores toward the mid-range, ensuring students aren't harshly penalized for minor issues
+2. **Apply weights** from the rubric (default: code = 60%, content = 40% for mixed)
+3. **Apply learning-oriented normalization**: A gentle curve that pushes scores toward the mid-range
 
 ```python
-# Normalization formula
 if raw_score > 85:
-    final = 85 + (raw_score - 85) * 0.3    # Compress excellence (diminishing returns)
+    final = 85 + (raw_score - 85) * 0.3    # Compress excellence
 elif raw_score < 30:
     final = 30 + (raw_score - 30) * 0.5    # Lift failing scores slightly
 else:
@@ -413,39 +366,27 @@ else:
 
 **Where**: `backend/core/services/integrity_service.py`
 
-After scoring, every submission runs through integrity checks:
+1. **Exact match detection**: Code fingerprinting (hash after normalizing whitespace/comments)
+2. **Fuzzy similarity**: `SequenceMatcher` — similarity > 85% is suspicious; > 95% is near-certain copying
+3. **AI-generation detection**: GPT-2 perplexity scoring. Human writing typically has perplexity > 50; AI-generated text often falls below 20-30.
 
-1. **Exact match detection**: Uses code fingerprinting (hash after normalizing whitespace/comments) to find identical submissions
-2. **Fuzzy similarity**: Uses `SequenceMatcher` to detect submissions with renamed variables or slightly modified code. A similarity > 85% is suspicious; > 95% is near-certain copying.
-3. **AI-generation detection**: Uses GPT-2 to compute text perplexity. Human writing typically has perplexity > 50; AI-generated text often falls below 20-30.
-
-> **Important**: Integrity checks **never auto-zero a score**. They only produce a `flag_score` (0-1) and `flag_reasons` list. High-flag submissions are routed to the teacher's review queue.
+> **Important**: Integrity checks **never auto-zero a score**. They only produce a `flag_score` and `flag_reasons`. High-flag submissions are routed to the teacher's review queue.
 
 ### Step 8: Student Tracking & Percentiles
 
 **Where**: `backend/core/services/student_tracker.py`
 
-After each evaluation, the system updates student profiles:
-
+After each evaluation:
 1. **Record the score** in the database with topic tag
-2. **Compute improvement delta**: Compare current score against the student's last 5 submissions on the same topic
+2. **Compute improvement delta** against the student's last 5 submissions on the same topic
 3. **Determine trend**: `improving` (>5 point gain), `declining` (>5 point drop), or `stable`
 4. **Compute percentile**: Where does this student rank in the class?
-
-```python
-# Example output per student:
-{
-    "percentile": 78,          # Top 22% of class
-    "improvement_delta": +11.5, # 11.5 points better than recent average
-    "trend": "improving"
-}
-```
 
 ### Step 9: Review Queue
 
 **Where**: `backend/core/services/review_queue.py`
 
-Certain submissions are automatically flagged for teacher review. A submission is queued if ANY of these conditions are true:
+Submissions are automatically flagged for teacher review when:
 
 | Trigger | Condition | Why |
 |---|---|---|
@@ -454,7 +395,7 @@ Certain submissions are automatically flagged for teacher review. A submission i
 | `BOUNDARY` | Score within 5 points of 25, 50, or 75 | Grade boundary — teacher should confirm |
 | `LOW_SCORE` | Final score < 10 | Likely an evaluation error |
 
-The teacher can then review the submission and **override the score** with their own assessment.
+The teacher can review and **override the score** with their own assessment.
 
 ---
 
@@ -462,7 +403,7 @@ The teacher can then review the submission and **override the score** with their
 
 **Where**: `backend/core/utils/vtt_parser.py` → `backend/core/controller/orchestrator.py`
 
-A dedicated evaluation mode for **lecture transcript summaries**. Teachers upload a `.vtt` lecture transcript and student HTML/text files containing their summaries. The system scores each summary against the lecture content using semantic embeddings — **100% local, zero API cost**.
+A dedicated evaluation mode for **lecture transcript summaries**. Teachers upload a `.vtt` lecture transcript and student HTML/text files containing their summaries. The system scores each summary against the lecture content using semantic embeddings.
 
 ### How It Works
 
@@ -470,22 +411,30 @@ A dedicated evaluation mode for **lecture transcript summaries**. Teachers uploa
 ┌────────────────────────────────────────────────────────────────┐
 │  TEACHER UPLOADS                                                │
 │  1. Lecture transcript (.vtt file)                              │
-│  2. Student summaries (120+ .html files from Moodle export)     │
+│  2. Student summaries (120+ .html/.txt files)                   │
 └──────────┬─────────────────────────────────────────────────────┘
            ▼
 ┌────────────────────────────────────────────────────────────────┐
 │  STEP 1: Parse VTT Transcript                                   │
-│  • Strip timestamps, speaker labels, and formatting             │
+│  • Strip timestamps, speaker labels, [Music] tags               │
 │  • Merge cue text into clean paragraph form                     │
 │  • Output: single clean transcript string                       │
 └──────────┬─────────────────────────────────────────────────────┘
            ▼
 ┌────────────────────────────────────────────────────────────────┐
-│  STEP 2: Extract Key Concepts (TF-IDF + Phrase Mining)          │
-│  • Mine 2-3 word technical phrases from transcript              │
+│  STEP 2: Two-Phase Concept Extraction                           │
+│                                                                  │
+│  Phase 1 — TF-IDF Candidate Extraction (20 terms):              │
+│  • Mine 2-3 word technical phrases from transcript               │
 │  • Score single words with TF × IDF × tech_boost                │
-│  • Stem-aware deduplication ("dimension" ≠ "dimensional" ✗)     │
-│  • Output: top 10 unique concepts                               │
+│  • 250+ filler words filtered out                                │
+│  • Stem-aware deduplication                                      │
+│                                                                  │
+│  Phase 2 — LLM Concept Refinement (Groq):                       │
+│  • Send 20 candidates + transcript snippet to Groq              │
+│  • LLM filters to genuinely teachable concepts (5-12)           │
+│  • Anti-hallucination: only keeps terms from original candidates │
+│  • Fallback: TF-IDF top 10 if LLM fails                        │
 └──────────┬─────────────────────────────────────────────────────┘
            ▼
 ┌────────────────────────────────────────────────────────────────┐
@@ -495,7 +444,7 @@ A dedicated evaluation mode for **lecture transcript summaries**. Teachers uploa
 │  • Encode ALL sentences from ALL students → one batch call      │
 │  • Cosine similarity: each sentence × each concept              │
 │  • Threshold: 0.30 (phrases) / 0.35 (single words)             │
-│  • Supplementary keyword matching for robustness                │
+│  • Union: semantic + keyword matching for robustness            │
 │  • Output: matched/missing concepts per student                 │
 └──────────┬─────────────────────────────────────────────────────┘
            ▼
@@ -505,7 +454,7 @@ A dedicated evaluation mode for **lecture transcript summaries**. Teachers uploa
 │  Score/10 = Coverage(35%) + Depth(15%) + Expression(10%)        │
 │           + Attempt(30%) + Base(10%)                            │
 │                                                                 │
-│  • Coverage: % of 10 key concepts found in summary              │
+│  • Coverage: % of key concepts found (dynamic count, not 10)   │
 │  • Depth: explains WHY, not just WHAT (causal language)         │
 │  • Expression: sentence structure, punctuation, readability     │
 │  • Attempt: submit 10+ words → full 30% (rewards effort)       │
@@ -514,90 +463,41 @@ A dedicated evaluation mode for **lecture transcript summaries**. Teachers uploa
 └──────────┬─────────────────────────────────────────────────────┘
            ▼
 ┌────────────────────────────────────────────────────────────────┐
-│  STEP 5: Rich Feedback Generation                               │
+│  STEP 5: Rich Feedback Generation (Groq LLaMA 3.1)             │
 │  • Overall assessment (Excellent/Good/Adequate/Needs Work)      │
+│  • 🤖 AI Analysis: personalized paragraph per student           │
 │  • Specific strengths identified                                │
-│  • Topics covered and missing                                   │
+│  • Topics covered and missing (dynamic count)                   │
 │  • Actionable improvement suggestions                           │
 └──────────┬─────────────────────────────────────────────────────┘
            ▼
 ┌────────────────────────────────────────────────────────────────┐
 │  STEP 6: Integrity + Export                                     │
-│  • Cross-student plagiarism check (fingerprinting + fuzzy)      │
-│  • CSV export: score/10, coverage, feedback, summary text       │
+│  • Cross-student plagiarism check                               │
+│  • CSV export with real LLM feedback (not templates)            │
 │  • Dashboard display with percentile ranking                    │
 └────────────────────────────────────────────────────────────────┘
 ```
 
-### Concept Extraction: Stem-Aware Deduplication
+### Why Two-Phase Concept Extraction?
 
-The concept extractor uses a custom **suffix-stripping stemmer** to avoid duplicate concepts:
+**The problem**: Pure TF-IDF often selects generic words like "data set", "precision", "classified" — students get penalized for not mentioning terms that aren't real concepts.
 
-| Raw Extracted | Stem | Kept? | Reason |
-|---|---|---|---|
-| `dimensionality reduction` | `dimension`, `reduc` | ✅ | First occurrence |
-| `dimensional` | `dimension` | ❌ | Stem already seen |
-| `precision` | `precis` | ✅ | New stem |
-| `false positive` | `fals`, `posit` | ✅ | New stems |
-| `positive` | `posit` | ❌ | Stem covered by "false positive" |
+**The fix**: TF-IDF oversamples 20 candidates (fast, deterministic), then Groq filters to only genuinely teachable concepts (smart, contextual). The LLM acts as a quality gate, not a generator.
 
-This ensures the 10 extracted concepts are **truly distinct topics**, not morphological variants.
-
-### Scoring Formula Breakdown
-
-```python
-# Each component scores 0-100 internally, then weighted:
-total = (
-    concept_coverage * 0.35 +    # How many of 10 key topics were mentioned
-    depth * 0.15 +               # Explains WHY, uses causal language
-    expression * 0.10 +          # Writing quality (sentences, punctuation)
-    attempt_score * 0.30 +       # Submit 10+ words → full marks here
-    10.0                         # Base points (1/10 guaranteed)
-)
-
-# Floor: genuine submissions (10+ words) get at least 3.5/10
-if word_count >= 10:
-    total = max(total, 35)
-
-final_score = total / 10  # Convert to /10 scale
-```
+**Impact**: A student covering 5 real concepts scores 5/6 (83%) instead of 5/10 (50%).
 
 ### Performance: Batch Processing 120+ Students
 
-The key optimization is **batch encoding**. Instead of encoding each student's sentences individually (slow), the system:
-
-1. Collects ALL sentences from ALL 120 students into one list
-2. Encodes them in a **single `model.encode()` call** with `batch_size=128`
-3. Uses NumPy matrix operations for similarity computation
+The key optimization is **batch encoding**:
+1. Collect ALL sentences from ALL 120 students into one list
+2. Encode them in a **single `model.encode()` call** with `batch_size=128`
+3. Use NumPy matrix operations for similarity computation
 
 | Approach | Time for 120 students |
 |---|---|
 | One-by-one encoding | ~6+ minutes |
 | Batch encoding | **~30-60 seconds** |
-
-### CSV Export Format
-
-The exported CSV contains:
-
-| Column | Description | Example |
-|---|---|---|
-| `student_name` | Clean name (no `_Result` suffix) | `Ramesh Chandra Dutta_35544` |
-| `score` | Final score out of 10 | `7.2` |
-| `concept_coverage` | Percentage of concepts matched | `60%` |
-| `concepts_matched` | Fraction matched | `6/10` |
-| `feedback` | Clean teacher-style feedback | `Good summary — covers key topics well.` |
-| `summary_text` | Student's actual submission text | `In today's class we learned about...` |
-
-> **No word_count, max_score, assignment_type, or file columns** — these were removed to keep the CSV focused on what teachers need.
-
-### Feedback Quality
-
-Feedback is structured in four sections:
-
-1. **Overall Assessment**: "🏆 Excellent Work", "✅ Good Summary", "📝 Adequate", or "⚠️ Needs Improvement"
-2. **Strengths**: What the student did well (e.g., "explained concepts clearly, not just listed them")
-3. **Topics Covered**: Which of the 10 key concepts were found
-4. **How to Improve**: Specific, actionable suggestions (e.g., "Include these missing topics: precision, f1 score")
 
 ---
 
@@ -607,44 +507,23 @@ Feedback is structured in four sections:
 
 Tree-sitter is a **parser generator tool** that builds real syntax trees from source code. Unlike regex or keyword matching, tree-sitter understands code the same way a compiler does.
 
-### What is an AST?
-
-An **Abstract Syntax Tree (AST)** is a tree representation of code where each node represents a syntactic element:
-
-```
-Code: for i in range(n):
-          if nums[i] > 0:
-              result.append(nums[i])
-
-AST:
-  for_statement
-  ├── identifier: "i"
-  ├── call: range(n)
-  └── block
-      └── if_statement
-          ├── comparison: nums[i] > 0
-          └── block
-              └── expression_statement
-                  └── call: result.append(nums[i])
-```
-
 ### What metrics does tree-sitter extract?
 
 | Metric | What It Measures | How It's Used |
 |---|---|---|
 | `line_count` | Total lines of code | Effort scoring |
-| `function_count` | Number of `def` / function definitions | Structure scoring |
-| `class_count` | Number of `class` definitions | Structure scoring |
+| `function_count` | Number of function definitions | Structure scoring |
+| `class_count` | Number of class definitions | Structure scoring |
 | `comment_count` | Number of comment lines | Readability scoring |
-| `loop_count` | Number of `for`/`while` loops | Approach scoring |
-| `condition_count` | Number of `if`/`elif`/`else` | Approach scoring |
+| `loop_count` | Number of for/while loops | Approach scoring |
+| `condition_count` | Number of if/elif/else | Approach scoring |
 | `try_except_count` | Number of error-handling blocks | Structure scoring |
 | `import_count` | Number of import statements | Structure scoring |
 | `variable_count` | Number of variable assignments | Structure scoring |
 | `max_nesting_depth` | Deepest level of nested blocks | Complexity scoring |
 | `unique_identifiers` | Count of unique variable/function names | Effort scoring |
 | `function_names` | List of all function/method names | Approach scoring (name matching) |
-| `complexity_score` | Composite 0-100 metric | Final scoring and differentiation |
+| `complexity_score` | Composite 0-100 metric | Final scoring |
 
 ### The Complexity Score Formula
 
@@ -656,8 +535,6 @@ complexity_score = min(100, (
 ))
 ```
 
-This score is what **differentiates two structurally similar submissions**. A `threeSum` with 6 levels of nesting and 16 unique identifiers will score differently from a `threeSumClosest` with 5 levels and 19 identifiers.
-
 **Supported Languages**: Python (`.py`) and C++ (`.cpp`)
 
 ---
@@ -665,15 +542,6 @@ This score is what **differentiates two structurally similar submissions**. A `t
 ## 🧮 Semantic Embeddings: Understanding Meaning, Not Just Keywords
 
 **Where**: `backend/core/services/embedding_service.py`
-
-### The Problem with Keywords
-
-Simple keyword matching can't understand that:
-- "Binary Search Tree" and "BST" mean the same thing
-- "implement a sorting algorithm" and "write code to arrange elements" are equivalent
-- A student who paraphrases concepts shouldn't be penalized
-
-### How Embeddings Solve This
 
 The system uses **all-MiniLM-L6-v2** (a sentence-transformer model) to convert text into 384-dimensional vectors. Texts with similar meanings end up close together in this vector space.
 
@@ -683,160 +551,63 @@ The system uses **all-MiniLM-L6-v2** (a sentence-transformer model) to convert t
 "Hash Table"         → [0.67, 0.45, -0.12, ...]  (very different vector)
 ```
 
-### Two scoring methods using embeddings:
+### Two scoring methods:
 
-1. **Semantic Coverage Score**: Computes cosine similarity between the student's text and the ideal answer. Score range: 0-100.
-
-2. **Concept Hit Rate**: For each key concept, finds the best-matching sentence in the student's text. If similarity > 0.55, it's a "hit". Final score = hits / total concepts.
-
-The combined score is: `60% semantic similarity + 40% concept hit rate`
+1. **Semantic Coverage Score**: Cosine similarity between student text and ideal answer. Score range: 0-100.
+2. **Concept Hit Rate**: For each key concept, finds the best-matching sentence in the student's text. If similarity > threshold, it's a "hit".
 
 ### Embedding cache
 
 Ideal answer embeddings are computed once and cached to disk (as `.npy` files) so subsequent evaluations of the same assignment are faster.
 
----
-
-## 🤖 LLM Integration: Multi-Tier AI Fallback Chain
-
-**Where**: `utils/llm_service.py` + `utils/local_slm_service.py`
-
-### What the LLM Does
-
-The language model provides two capabilities:
-
-1. **Relevance Checking** (`check_relevance`): Determines if a submission answers the question
-2. **Semantic Feedback Generation** (`generate_semantic_feedback`): Creates personalized, detailed feedback
-
-### The Fallback Chain
-
-Evaluator 2.0 uses a **three-tier fallback chain** to ensure AI feedback is always available, even without internet:
-
-```
-┌───────────────────────────────────────────────────────────┐
-│  Tier 1: Google Gemini API (Cloud)                         │
-│  • ~2s response time                                       │
-│  • Highest quality feedback                                 │
-│  • Requires API key + internet                              │
-│  • Subject to rate limits                                   │
-└───────────────────────────┬───────────────────────────────┘
-                            │ fails?
-                            ▼
-┌───────────────────────────────────────────────────────────┐
-│  Tier 2: Ollama + Phi-3 Mini (Local GPU)                   │
-│  • ~1.7s relevance check (warm), ~20s feedback              │
-│  • Good quality feedback with code examples                 │
-│  • Runs on Apple Silicon Metal GPU                          │
-│  • Zero API cost, fully offline                             │
-└───────────────────────────┬───────────────────────────────┘
-                            │ not running?
-                            ▼
-┌───────────────────────────────────────────────────────────┐
-│  Tier 3: Rule-Based Feedback (Always Works)                │
-│  • Instant response                                        │
-│  • Keyword-based + AST analysis feedback                    │
-│  • No AI model needed                                      │
-│  • Always available as final safety net                     │
-└───────────────────────────────────────────────────────────┘
-```
-
-### Graceful Degradation
-
-The LLM service is designed to **never break the system** when unavailable:
-
-**Key safety rules:**
-- On failure → returns `UNCERTAIN`, never `IRRELEVANT`
-- Tracks consecutive failures; disables cloud after 3 to conserve quota
-- Automatically detects and switches to Ollama when Gemini is rate-limited
-- The system ALWAYS produces a score, even without any LLM
-
-### Feedback Quality Comparison
-
-| Tier | Relevance | Feedback Quality | Speed |
-|---|---|---|---|
-| **Gemini API** | Very accurate | Detailed with code examples | ~2s |
-| **Ollama Phi-3** | Accurate | Good with specific suggestions | ~1.7s (relevance) / ~20s (feedback) |
-| **Rule-based** | N/A (UNCERTAIN) | Basic keyword-based hints | Instant |
-
-When the LLM is available, feedback looks like this:
-> **Summary**: This code implements a two-pointer approach on a sorted array to find all unique triplets that sum to zero.
->
-> **Corrections Needed**: Right before your `while left < right:` statement, add a comment like: `# Use two pointers to find pairs that complement nums[i]`. Also explain your duplicate-skipping logic.
->
-> **Strengths**:
-> - Achieved complexity score of 80.0, reflecting efficient two-pointer strategy
-> - 16 unique identifiers show thoughtful variable naming
-> - Perfect 100% test pass rate
+> **Lazy loading**: The embedding model is only loaded when needed, with `ImportError` guards so servers without `sentence-transformers` installed don't crash — they just skip semantic scoring.
 
 ---
 
-## 🔌 Offline SLM: Ollama + Phi-3 Mini
+## 🤖 LLM Integration: Groq + OpenRouter
 
-**Where**: `utils/local_slm_service.py`
+**Where**: `utils/llm_service.py`
 
-### Why Offline?
+### What the LLMs Do
 
-Cloud APIs are great but have limitations:
-- **Cost**: Every API call costs money at scale
-- **Rate limits**: Gemini free tier limits can throttle evaluations
-- **Privacy**: Student submissions are sent to external servers
-- **Connectivity**: Doesn't work without internet
-
-The local SLM solves all of these by running a small but capable language model directly on your machine.
-
-### Architecture: Dual Backend
-
-```
-LocalSLMService
-├── Ollama REST API (http://127.0.0.1:11434)     ← PRIMARY
-│   • Optimized Metal GPU runtime for Apple Silicon
-│   • 12 tok/s on M1, faster on M2/M3
-│   • Model stays loaded in memory between requests
-│   • Auto-detected: checks /api/tags for phi3:mini
-│
-└── llama-cpp-python (direct GGUF loading)          ← FALLBACK
-    • No daemon required (loads .gguf file directly)
-    • 3-5 tok/s on M1
-    • Uses the existing Phi-3 Q4_K_M GGUF model
-```
-
-### Model Details
-
-| Property | Value |
-|---|---|
-| **Model** | Microsoft Phi-3-mini-4k-instruct |
-| **Parameters** | 3.8 billion |
-| **Quantization** | Q4_K_M (4-bit, mixed precision) |
-| **File Size** | 2.2 GB |
-| **Context Window** | 1024 tokens (optimized for speed) |
-| **GPU** | Apple Silicon Metal (full layer offload) |
-
-### Performance Benchmarks (Apple M1)
-
-| Task | Ollama (warm) | llama-cpp | Gemini API |
+| LLM | Model | Purpose | Rate Limit |
 |---|---|---|---|
-| **Relevance check** | 1.7s | 7.3s | 2s |
-| **Feedback (250 tok)** | 20s | 72s | 2s |
-| **Throughput** | 12 tok/s | 3-5 tok/s | N/A |
-| **Cost per call** | $0 | $0 | ~$0.001 |
+| **Groq** | LLaMA 3.1 8B Instant | Feedback generation, concept refinement, AI Study Coach | 25 req/min |
+| **OpenRouter** | NVIDIA Nemotron 30B (free) | Code relevance checking (RELEVANT/PARTIAL/IRRELEVANT) | 20 req/min |
 
-### Setup
-
-```bash
-# Install Ollama
-brew install ollama
-
-# Start Ollama server (with Metal GPU acceleration)
-OLLAMA_FLASH_ATTENTION=1 ollama serve
-
-# Pull Phi-3 Mini (2.2GB download, one-time)
-ollama pull phi3:mini
-
-# Or auto-start at login:
-brew services start ollama
+### Groq Configuration
+```python
+API: https://api.groq.com/openai/v1/chat/completions
+Model: llama-3.1-8b-instant
+Temperature: 0.3 (deterministic-ish)
+Max tokens: 500
+Retry: On 429, wait 15 seconds and retry once
 ```
 
-> **No configuration needed**: The system auto-detects Ollama at `localhost:11434` and falls back to llama-cpp-python if Ollama isn't running.
+### OpenRouter Configuration
+```python
+API: https://openrouter.ai/api/v1/chat/completions
+Model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+Temperature: 0.2 (more deterministic for yes/no judgments)
+Max tokens: 200
+```
+
+### Rate Limiting Architecture
+
+```python
+class _RateLimiter:
+    # Groq: 60/25 = 2.4 seconds minimum between calls
+    # OpenRouter: 60/20 = 3.0 seconds minimum between calls
+    # Prevents 429 errors that would crash batch evaluation
+```
+
+### Fallback Strategy
+
+Every LLM call is wrapped in try/except with deterministic fallbacks:
+- Concept refinement → falls back to TF-IDF top 10
+- Relevance check → falls back to keyword-based heuristic  
+- Feedback generation → falls back to rule-based template feedback
+- The system **never crashes** due to LLM failures
 
 ---
 
@@ -845,8 +616,6 @@ brew services start ollama
 **Where**: `backend/core/services/judge0_service.py`
 
 ### How Teachers Provide Test Cases
-
-In the upload form, teachers can paste a JSON array in the test cases textarea:
 
 ```json
 [
@@ -858,124 +627,29 @@ In the upload form, teachers can paste a JSON array in the test cases textarea:
 
 Both `{"input", "output"}` and `{"stdin", "expected_output"}` formats are accepted.
 
-### Execution Flow
-
-```
-Test cases provided?
-├── NO  → Skip test execution (static analysis only)
-└── YES → Is it a "class Solution" pattern?
-          ├── YES (Python) → Auto-wrap with stdin parser + method caller
-          ├── YES (C++)    → Auto-wrap with #include headers + main() generator
-          └── NO           → Run code as-is
-          ↓
-          Is Judge0 reachable? (actual HTTP ping to /about endpoint)
-          ├── YES → Submit to Judge0 API (sandboxed, supports all languages)
-          └── NO  → Is the language Python?
-                    ├── YES → Run locally via Python subprocess
-                    └── NO  → Is the language C++?
-                              ├── YES → Compile with g++ -std=c++17 and run locally
-                              └── NO  → Skip test execution (log warning)
-```
-
 ### C++ LeetCode Auto-Wrapping
 
-**Where**: `judge0_service.py` → `_wrap_cpp_class_solution()`
+The system detects `class Solution` patterns and automatically wraps with:
+1. Required `#include` headers
+2. `using namespace std;`
+3. Parsed method signature (parameter types via regex)
+4. Generated `main()` function with stdin parsing
+5. Output formatting matching expected format
 
-Many students submit LeetCode-style C++ solutions as bare classes without `main()` or `#include` headers:
+### Local Fallback
 
-```cpp
-class Solution {
-public:
-    vector<int> twoSum(vector<int>& nums, int target) {
-        // student code here...
-    }
-};
-```
-
-The system **automatically wraps** this with a complete executable program:
-
-1. **Prepends headers**: `<iostream>`, `<vector>`, `<unordered_map>`, `<sstream>`, `<algorithm>`, `<climits>`, etc.
-2. **Adds `using namespace std;`**
-3. **Parses the method signature** using regex to detect parameter types (`vector<int>`, `int`, `string`, `bool`, `double`)
-4. **Generates a `main()` function** that:
-   - Reads each parameter from stdin (line-by-line)
-   - Parses JSON arrays like `[-3,4,3,90]` into `vector<int>`
-   - Parses scalar values like `9` into `int`
-   - Creates a `Solution` instance and calls the detected method
-   - Prints the result in the expected format (e.g., `[0,2]` for vector results)
-
-**Example**: Given the input `[-3,4,3,90]\n0` and the class above, the wrapper generates:
-
-```cpp
-#include <iostream>
-#include <vector>
-#include <sstream>
-#include <unordered_map>
-using namespace std;
-
-class Solution { /* student code */ };
-
-int main() {
-    string line0;
-    getline(cin, line0);
-    vector<int> arg0;
-    // ... parse JSON array from line0 ...
-    
-    string line1;
-    getline(cin, line1);
-    int arg1 = stoi(line1);
-    
-    Solution sol;
-    vector<int> result = sol.twoSum(arg0, arg1);
-    cout << "[";
-    for(int i = 0; i < (int)result.size(); i++) {
-        if(i > 0) cout << ",";
-        cout << result[i];
-    }
-    cout << "]" << endl;
-    return 0;
-}
-```
-
-This is analogous to how LeetCode itself tests your submissions — the auto-wrapper acts as the invisible test harness.
-
-### Local C++ Execution Fallback
-
-**Where**: `judge0_service.py` → `_run_local_cpp()`
-
-When Judge0 (Docker) is unavailable, C++ code is compiled and executed locally using the system's `g++` compiler:
-
-1. Wrapped code is written to a temporary `.cpp` file
-2. Compiled with `g++ -std=c++17 -O2`
-3. Binary is executed as a subprocess with stdin piped in
-4. stdout is captured, base64-encoded (matching Judge0 response format)
-5. All temporary files are cleaned up afterward
-6. Returns a Judge0-compatible response dict for unified handling downstream
-
-This means **C++ test cases work out of the box on any Mac or Linux machine** with `g++` installed — no Docker required.
-
-### Self-Hosted Judge0
-
-For full language support and sandboxed execution, you can run Judge0 locally:
-
-```bash
-# 1. Open Docker Desktop
-# 2. Run:
-docker-compose -f docker-compose.judge0.yml up -d
-# Judge0 will be available at http://localhost:2358
-# Note: The Judge0 image is ~3.3GB and may take several minutes to pull
-```
-
-The `.env` file is already configured to point to `localhost:2358`.
+When Judge0 is unavailable:
+- **Python**: `subprocess` execution with sandboxing
+- **C++**: Compile with `g++ -std=c++17 -O2`, execute as subprocess
+- All temporary files cleaned up afterward
 
 ---
 
 ## 🕵️ Integrity System: Plagiarism & AI Detection
 
-**Where**: `backend/core/services/integrity_service.py` + `submission_index.py`
+**Where**: `backend/core/services/integrity_service.py`
 
-### Plagiarism Detection Pipeline
-
+### Plagiarism Detection
 ```
 Student Code → Normalize (strip whitespace, comments) → Fingerprint (MD5 hash)
                                                               │
@@ -983,11 +657,6 @@ Student Code → Normalize (strip whitespace, comments) → Fingerprint (MD5 has
                                            ▼                  ▼
                                      Exact Match?      Fuzzy Similarity
                                      (hash lookup)    (SequenceMatcher)
-                                           │                  │
-                                           ▼                  ▼
-                                     flag_score = 1.0   flag_score = similarity
-                                     "Exact code match   "Suspicious similarity
-                                      with student_X"     (87% match)"
 ```
 
 ### AI-Generated Content Detection
@@ -1000,9 +669,7 @@ Uses **GPT-2 perplexity** as a signal:
 | 25 - 40 | Moderate AI likelihood | `flag_score += 0.7` |
 | < 25 | High AI likelihood | `flag_score += 1.0` |
 
-**How perplexity works**: Language models predict the next token in a sequence. Human writing is more surprising (higher perplexity) because humans make creative, unpredictable choices. AI-generated text is less surprising (lower perplexity) because it follows statistical patterns.
-
-> **Important**: These flags are **advisory only**. They route submissions to the teacher's review queue but never automatically zero a score.
+> GPT-2 perplexity is lazy-loaded with ImportError guards — servers without PyTorch skip this check gracefully.
 
 ---
 
@@ -1010,42 +677,27 @@ Uses **GPT-2 perplexity** as a signal:
 
 **Where**: `backend/core/services/review_queue.py` + `frontend/app/review/page.tsx`
 
-### Philosophy
-
-The system is designed with a **"flag, don't punish"** philosophy. Automated systems can make mistakes, so:
-
+The system uses a **"flag, don't punish"** philosophy:
 1. Suspicious submissions are **flagged** and queued for review
-2. The teacher sees **why** it was flagged (plagiarism evidence, AI detection result, uncertain verdict)
+2. The teacher sees **why** it was flagged
 3. The teacher can **override the score** with their own assessment
-4. The original AI score is preserved for tracking system accuracy over time
+4. The original AI score is preserved for tracking
 
-### Queue Persistence
-
-The review queue has a **dual storage strategy**:
-- **Primary**: PostgreSQL database (persistent across restarts)
-- **Fallback**: In-memory Python dictionary (works when DB is unavailable)
-
-This ensures the review queue **always works**, even without a database.
-
-### Frontend Fallback
-
-The review page also has a fallback: if the API returns no pending reviews, it builds review items from the **session-stored evaluation results** (saved in browser sessionStorage). This means teachers can always access their reviews even if the backend DB is empty.
+**Dual storage**: PostgreSQL (persistent) + in-memory dictionary (fallback).
 
 ---
 
 ## 📈 Student Profile Tracking
 
-**Where**: `backend/core/services/student_tracker.py` + `frontend/app/student/[id]/page.tsx`
-
-### What's Tracked Per Student
+**Where**: `backend/core/services/student_tracker.py`
 
 | Metric | Description |
 |---|---|
-| **Score History** | Every score recorded with timestamp and topic tag |
-| **Improvement Delta** | Change vs. average of last 5 submissions on same topic |
-| **Trend** | `improving` (+5 pts), `declining` (-5 pts), or `stable` |
-| **Percentile** | Where the student ranks in the class (0-100) |
-| **Skill Breakdown** | Average score per topic tag (e.g., "sorting": 82, "graphs": 65) |
+| **Score History** | Every score with timestamp and topic tag |
+| **Improvement Delta** | Change vs. average of last 5 submissions |
+| **Trend** | `improving`, `declining`, or `stable` |
+| **Percentile** | Class ranking (0-100) |
+| **Skill Breakdown** | Average score per topic tag |
 | **Cumulative GPA** | Letter grade + GPA on 4.0 scale |
 
 ### Grade Scale
@@ -1073,6 +725,7 @@ Built with **Next.js 14**, **TailwindCSS**, and the **"Obsidian Scholar"** desig
 
 | Page | Path | Purpose |
 |---|---|---|
+| **Landing** | `/` | Marketing page with features, workflow demo, CTA |
 | **Login** | `/login` | Role-based login (Student/Teacher toggle) |
 | **Upload** | `/upload` | Upload files, set problem statement, paste test cases |
 | **Results** | `/results` | Dashboard with all evaluation results, scores, feedback |
@@ -1080,28 +733,27 @@ Built with **Next.js 14**, **TailwindCSS**, and the **"Obsidian Scholar"** desig
 | **Student Profile** | `/student/[id]` | Individual student dashboard with history and trends |
 
 ### Design System
-
-The UI uses a custom design token system:
 - **Background**: Deep obsidian (#0A0A12)
 - **Surface layers**: Four tonal levels for depth
 - **Primary accent**: Violet (#A78BFA) for interactive elements
 - **Semantic colors**: Emerald (success), Coral (warning), Amber (caution)
-- **Typography**: System fonts with monospace for scores
+- **Typography**: JetBrains Mono for code, Inter/system fonts for UI
 
 ---
 
 ## 🎓 Frontend: The Student Portal
 
-Students access their own dedicated portal at `/portal` after logging in. The portal uses the same **Obsidian Scholar** design system as the teacher dashboard, with glassmorphism cards and violet accent theming.
+Students access their portal at `/portal` after logging in.
 
 ### Student Pages
 
 | Page | Path | Purpose |
 |---|---|---|
-| **Dashboard** | `/portal` | Overview with GPA, percentile, recent submissions, skill breakdown, achievements |
-| **My Submissions** | `/portal/submissions` | Full history with expandable AI feedback and integrity status |
-| **Progress** | `/portal/progress` | Score trend chart, cumulative grade, topic-wise skill development |
+| **Dashboard** | `/portal` | GPA, percentile, recent submissions, skill breakdown, achievements |
+| **My Submissions** | `/portal/submissions` | Full history with expandable AI feedback |
+| **Progress** | `/portal/progress` | Score trend chart, cumulative grade, topic-wise development |
 | **Leaderboard** | `/portal/leaderboard` | Anonymized class ranking — student sees own position highlighted |
+| **AI Coach** | `/portal/coach` | Streaming AI study coach + improvement plan generator |
 
 ### Privacy Controls
 
@@ -1109,15 +761,12 @@ Students access their own dedicated portal at `/portal` after logging in. The po
 |---|---|---|
 | Own scores & feedback | ✅ | Scoped by `student_id` in JWT |
 | Own history & trends | ✅ | Filtered via ID resolver |
-| Own class percentile | ✅ | Computed server-side |
 | Other students' names | ❌ | Shown as "Student #N" |
 | Other students' scores | ❌ | Only anonymized averages |
 | Integrity flag details | ❌ | Shows "Under Review" only |
 | Teacher features | ❌ | `require_student` dependency → 403 |
 
 ### Dynamic Achievements
-
-Students earn achievement badges based on their performance:
 - **Top 10%** / **Top 25%** — class percentile ranking
 - **On the Rise** — improving trend detected
 - **Dedicated Submitter** — 10+ submissions completed
@@ -1125,20 +774,45 @@ Students earn achievement badges based on their performance:
 
 ---
 
-## 🔐 Authentication & Role-Based Access
+## 🤝 AI Study Coach
 
-**Where**: `backend/app/middleware/auth.py` + `backend/app/routes/auth_routes.py`
+**Where**: `backend/app/routes/chat_routes.py` + `frontend/app/portal/coach/page.tsx`
 
-The system uses **JWT (JSON Web Token)** authentication with role-based access control.
+A streaming AI chatbot that knows each student's performance history.
 
 ### How It Works
 
 ```
+Student: "How can I improve my ML assignment?"
+
+System Context (auto-injected):
+- Student's past scores, weak areas, submission history
+- Missing concepts from recent evaluations
+- Lecture transcript concepts
+
+Groq LLaMA 3.1 Response (streamed):
+"Based on your last submission (6.5/10), you missed key concepts 
+like cross-validation and feature scaling. Here's a focused study plan:
+1. Review StandardScaler — it normalizes features before training...
+2. Practice k-fold cross validation — it prevents overfitting..."
+```
+
+### Features
+- **Streaming responses** — tokens appear as they're generated
+- **Context-aware** — knows student's weak areas from evaluation history
+- **Improvement plan generator** — one-click personalized study plan
+- **Chat status indicator** — shows if Groq backend is available
+
+---
+
+## 🔐 Authentication & Role-Based Access
+
+**Where**: `backend/app/middleware/auth.py` + `backend/app/routes/auth_routes.py`
+
+```
 Login Request (POST /api/auth/login)
-├── Role: Teacher?
-│   └── Validates against seeded teacher account
-└── Role: Student?
-    └── Auto-creates account on first login (password = username)
+├── Role: Teacher? → Validates against seeded teacher account
+└── Role: Student? → Auto-creates account on first login
     ↓
 JWT Token Issued (24-hour expiry)
 ├── Contains: username, role, student_id, display_name
@@ -1155,16 +829,28 @@ Subsequent API Requests
 | Role | Username | Password | Notes |
 |---|---|---|---|
 | Teacher | `teacher` | `teacher` | Auto-seeded on startup |
-| Student | any (e.g. `student_ravi`) | same as username | Auto-created on first login |
+| Student | any | same as username | Auto-created on first login |
 
-### Student ID Resolution
+---
 
-The evaluation pipeline stores student IDs with a `_Result` suffix (e.g., `student_ravi_Result`). The portal includes an automatic resolver that tries:
-1. Exact match → `student_ravi`
-2. With suffix → `student_ravi_Result`
-3. LIKE prefix → `student_ravi%`
+## 📥 CSV Export System
 
-This ensures students see their data regardless of how their ID was stored during evaluation.
+**Where**: `backend/core/utils/csv_export.py`
+
+### Two export formats:
+
+**Summary CSV (`results.csv`):**
+```
+student_name, score, concept_coverage, concepts_matched, feedback, summary_text
+```
+
+**Detailed CSV (`results_detailed.csv`):**
+```
+student_name, score, concept_coverage, concepts_matched, 
+topics_covered, topics_missing, feedback, summary_text
+```
+
+The feedback column includes the **actual LLM-generated feedback** (stripped of emojis/markdown for CSV cleanliness), not generic templates. Students get the same rich, personalized AI analysis in the CSV that they see on the web dashboard.
 
 ---
 
@@ -1183,24 +869,24 @@ This ensures students see their data regardless of how their ID was stored durin
 |---|---|---|---|
 | `POST` | `/api/evaluate` | None* | Upload and evaluate submissions |
 | `GET` | `/api/evaluations/history` | None* | Retrieve all past evaluation results |
-| `DELETE` | `/api/evaluations/cleanup?below_score=10` | None* | Remove old broken evaluation results |
-| `DELETE` | `/api/evaluations/clear-all?confirm=true` | None* | Clear ALL evaluation data from database |
+| `DELETE` | `/api/evaluations/clear-all?confirm=true` | None* | Clear ALL evaluation data |
+| `GET` | `/api/download/{filename}` | None | Download CSV report |
 | `GET` | `/api/reviews` | None* | Get pending review queue items |
 | `POST` | `/api/reviews/{id}/override` | None* | Teacher overrides a score |
 | `GET` | `/api/students/{id}/profile` | None* | Get student's complete profile |
 | `GET` | `/health` | None | Health check with DB and LLM status |
 
-*These endpoints currently don't enforce auth but are intended for teacher use only.
-
 ### Student Portal Endpoints
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| `GET` | `/api/portal/dashboard` | Student | Student's personal dashboard with stats |
-| `GET` | `/api/portal/submissions` | Student | All of student's evaluated submissions |
-| `GET` | `/api/portal/submissions/{id}` | Student | Single submission with full AI feedback |
-| `GET` | `/api/portal/progress` | Student | Score trends, skill breakdown, improvement |
+| `GET` | `/api/portal/dashboard` | Student | Student's personal dashboard |
+| `GET` | `/api/portal/submissions` | Student | All evaluated submissions |
+| `GET` | `/api/portal/progress` | Student | Score trends and skill breakdown |
 | `GET` | `/api/portal/leaderboard` | Student | Anonymized class ranking |
+| `POST` | `/api/portal/chat` | Student | AI Study Coach (streaming) |
+| `POST` | `/api/portal/improvement-plan` | Student | Personalized improvement plan |
+| `GET` | `/api/portal/chat/status` | Student | Chat backend availability |
 
 ### POST /api/evaluate — Request Format
 
@@ -1209,36 +895,12 @@ Content-Type: multipart/form-data
 
 Fields:
   files[]            - Student submission files (required)
-  assignment_type    - "code" | "content" | "mixed" (required)
+  assignment_type    - "code" | "content" | "mixed" | "transcript" (required)
   problem_statement  - The question asked (recommended)
   test_cases         - JSON array (optional)
   rubric_content     - Custom rubric JSON (optional)
   topic              - Topic tag for tracking (optional)
-```
-
-### Response Format
-
-```json
-{
-  "status": "success",
-  "message": "Evaluated 3 submissions successfully",
-  "results": [
-    {
-      "submission_id": "student_alice_Result",
-      "final_score": 87.6,
-      "max_score": 100,
-      "percentage": 87.6,
-      "feedback": ["## AI Evaluator", "**Summary**: ..."],
-      "assignment_type": "code",
-      "file": "student_alice.py",
-      "flag_score": 0.7,
-      "flag_reasons": ["High AI likelihood: low perplexity score (3.0)."],
-      "percentile": 100,
-      "improvement_delta": 4.0,
-      "trend": "improving"
-    }
-  ]
-}
+  transcript_file    - VTT lecture file (for transcript mode)
 ```
 
 ---
@@ -1249,89 +911,121 @@ Fields:
 Evaluator/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                    # FastAPI application entry point
+│   │   ├── main.py                    # FastAPI application entry point + CORS config
 │   │   ├── config.py                  # Application configuration
 │   │   ├── middleware/
 │   │   │   └── auth.py                # JWT auth middleware + role-based dependencies
 │   │   ├── routes/
 │   │   │   ├── evaluate.py            # POST /api/evaluate (main endpoint)
+│   │   │   ├── evaluations.py         # GET /api/evaluations/history, DELETE clear-all
 │   │   │   ├── auth_routes.py         # POST /api/auth/login, GET /api/auth/me
 │   │   │   ├── student_portal_routes.py # GET /api/portal/* (student-scoped endpoints)
+│   │   │   ├── chat_routes.py         # POST /api/portal/chat (AI Study Coach)
 │   │   │   ├── review_routes.py       # GET/POST /api/reviews
-│   │   │   └── student_routes.py      # GET /api/students/:id/profile
+│   │   │   ├── student_routes.py      # GET /api/students/:id/profile
+│   │   │   └── submissions.py         # Submission management routes
 │   │   ├── schemas/
-│   │   │   └── request.py             # Pydantic models (TestCase, RubricConfig, etc.)
+│   │   │   ├── request.py             # Pydantic models (TestCase, RubricConfig, etc.)
+│   │   │   ├── evaluation.py          # Evaluation response schemas
+│   │   │   └── submission.py          # Submission schemas
 │   │   └── services/
-│   │       └── evaluator.py           # Service layer (request → orchestrator adapter)
+│   │       ├── evaluator.py           # Service layer (request → orchestrator adapter)
+│   │       ├── evaluation_service.py  # Evaluation business logic
+│   │       └── submission_service.py  # Submission management service
 │   │
 │   └── core/
 │       ├── agents/
 │       │   ├── base_agent.py          # Abstract base class for all agents
 │       │   ├── code_agent.py          # Code evaluation (AST + approach + readability)
-│       │   ├── content_agent.py       # Content evaluation (coverage + alignment + flow)
+│       │   ├── content_agent.py       # Content evaluation (factual + coverage + alignment)
 │       │   └── aggregator_agent.py    # Combines agent outputs into final score
 │       │
 │       ├── controller/
-│       │   └── orchestrator.py        # Main pipeline coordinator
+│       │   └── orchestrator.py        # Main pipeline coordinator (all 4 eval types)
 │       │
 │       ├── services/
-│       │   ├── database.py            # PostgreSQL connection + schema management
+│       │   ├── database.py            # PostgreSQL connection + schema (SSL for Neon)
 │       │   ├── treesitter_parser.py   # AST parsing (Python, C++)
-│       │   ├── judge0_service.py      # Test execution (Judge0 API + local fallback)
-│       │   ├── embedding_service.py   # Semantic embeddings (all-MiniLM-L6-v2)
-│       │   ├── integrity_service.py   # Plagiarism + AI detection
-│       │   ├── review_queue.py        # Manual review queue (DB + in-memory)
-│       │   ├── student_tracker.py     # Score history + percentiles + trends
+│       │   ├── judge0_service.py      # Test execution (Judge0 + local g++/python fallback)
+│       │   ├── embedding_service.py   # Semantic embeddings (all-MiniLM-L6-v2, lazy-loaded)
+│       │   ├── integrity_service.py   # Plagiarism + AI detection (GPT-2, lazy-loaded)
+│       │   ├── review_queue.py        # Manual review queue (DB + in-memory fallback)
+│       │   ├── student_tracker.py     # Score history + percentiles + trends + GPA
 │       │   ├── evaluation_store.py    # Persistent result storage
 │       │   └── submission_index.py    # Code fingerprinting for plagiarism
 │       │
 │       └── utils/
-│           ├── file_parser.py         # File reading + student name extraction
-│           ├── rubric.py              # Rubric management + validation
-│           ├── csv_export.py          # CSV export (/10 scores, summary text, clean feedback)
-│           └── vtt_parser.py          # VTT transcript parser + concept extraction + batch scoring
+│           ├── file_parser.py         # File reading + student name extraction + auto-split
+│           ├── rubric.py              # Rubric management + validation + default weights
+│           ├── csv_export.py          # CSV export (real LLM feedback, /10 scores)
+│           └── vtt_parser.py          # VTT parser + TF-IDF + LLM concept refinement + batch scoring
 │
 ├── frontend/
 │   ├── app/
 │   │   ├── layout.tsx                 # Root layout with Obsidian theme
 │   │   ├── page.tsx                   # Landing page
 │   │   ├── login/page.tsx             # Role-based login page (Student/Teacher)
-│   │   ├── upload/page.tsx            # File upload interface
-│   │   ├── results/page.tsx           # Results dashboard
-│   │   ├── review/page.tsx            # Review queue page
+│   │   ├── upload/page.tsx            # File upload interface (4 assignment types)
+│   │   ├── results/page.tsx           # Results dashboard with score cards
+│   │   ├── review/page.tsx            # Review queue page with override
 │   │   ├── student/[id]/page.tsx      # Student profile page (teacher view)
 │   │   └── portal/                    # Student portal (auth-protected)
-│   │       ├── page.tsx               # Student dashboard
-│   │       ├── submissions/page.tsx   # Student's submission history
+│   │       ├── page.tsx               # Student dashboard (GPA, achievements)
+│   │       ├── submissions/page.tsx   # Submission history with AI feedback
 │   │       ├── progress/page.tsx      # Score trends and skill development
-│   │       └── leaderboard/page.tsx   # Anonymized class rankings
+│   │       ├── leaderboard/page.tsx   # Anonymized class rankings
+│   │       └── coach/page.tsx         # AI Study Coach (streaming chat)
+│   │
 │   ├── components/
 │   │   ├── AppNavbar.tsx              # Teacher navigation bar with auth
 │   │   ├── StudentNavbar.tsx          # Student portal navigation bar
-│   │   └── FileUpload.tsx             # Drag-and-drop file upload component
+│   │   ├── FileUpload.tsx             # Drag-and-drop file upload component
+│   │   ├── index.ts                   # Component barrel exports
+│   │   ├── landing/                   # Landing page components
+│   │   │   ├── HeroSection.tsx        # Hero with animated gradient
+│   │   │   ├── FeaturesGrid.tsx       # Feature cards grid
+│   │   │   ├── WorkflowSection.tsx    # How-it-works workflow
+│   │   │   ├── CTASection.tsx         # Call-to-action section
+│   │   │   ├── TrustedBy.tsx          # Trust indicators
+│   │   │   ├── Navbar.tsx             # Landing page navbar
+│   │   │   └── Footer.tsx             # Landing page footer
+│   │   ├── results/
+│   │   │   ├── ResultCard.tsx         # Individual result score card
+│   │   │   └── ResultsDashboard.tsx   # Results overview dashboard
+│   │   └── upload/
+│   │       ├── AssignmentTypeToggle.tsx # Code/Content/Mixed/Transcript toggle
+│   │       ├── ContextInputs.tsx      # Problem statement + test cases inputs
+│   │       ├── FileItem.tsx           # Individual file item with preview
+│   │       └── UploadCard.tsx         # File drop zone card
+│   │
 │   └── lib/
-│       ├── results-store.ts           # Client-side results persistence
-│       └── auth-store.ts             # JWT token management + authenticated requests
+│       ├── api.ts                     # Centralized API base URL (supports deployment)
+│       ├── auth-store.ts              # JWT token management + role detection
+│       └── results-store.ts           # Client-side results persistence
 │
 ├── utils/
-│   ├── llm_service.py                 # Multi-tier LLM (Gemini → Ollama → rule-based)
-│   └── local_slm_service.py           # Offline Phi-3 SLM (Ollama + llama-cpp-python)
+│   └── llm_service.py                 # LLM service (Groq + OpenRouter + rate limiting)
 │
 ├── test_submissions/                   # Sample test submissions
+│   ├── live_test/                     # Code evaluation test files
 │   ├── mixed_single/                  # Single-file mixed eval samples
 │   ├── mixed_test/                    # Two-file mixed eval samples
 │   ├── mixed_txt_test/                # Text-based mixed eval samples
-│   └── transcript_test/              # Transcript evaluation test files (VTT + HTML summaries)
+│   ├── nlp_test/                      # NLP content evaluation samples
+│   └── transcript_test/              # Transcript evaluation test files
 │
+├── sample_data/                       # Sample rubrics, problems, and test scripts
+├── outputs/                           # Generated CSV exports
 ├── docker-compose.judge0.yml          # Self-hosted Judge0 setup
-├── requirements.txt                   # Python dependencies
-├── run_backend.py                     # Backend startup script
+├── requirements.txt                   # Python dependencies (full, with ML libs)
+├── requirements-deploy.txt            # Slim dependencies (for Render free tier, no torch)
+├── run_backend.py                     # Backend startup script (reads PORT env var)
 └── .env                               # Environment variables (gitignored)
 ```
 
 ---
 
-## 🚀 How to Run
+## 🚀 How to Run (Local Development)
 
 ### Prerequisites
 
@@ -1355,7 +1049,7 @@ python -m venv .venv
 source .venv/bin/activate     # macOS/Linux
 # .venv\Scripts\activate      # Windows
 
-# Install dependencies
+# Install dependencies (full — includes ML libraries)
 pip install -r requirements.txt
 ```
 
@@ -1366,10 +1060,10 @@ Create a `.env` file in the project root:
 ```env
 # --- LLM ---
 LLM_ENABLED=true
-GEMINI_API_KEY=your_gemini_api_key_here     # Get from https://aistudio.google.com/apikey
-GEMINI_MODEL=gemini-2.0-flash
+GROQ_API_KEY=your_groq_api_key_here           # Get from https://console.groq.com
+OPENROUTER_API_KEY=your_openrouter_key_here   # Get from https://openrouter.ai/keys
 
-# --- Database (optional) ---
+# --- Database (optional for local) ---
 DB_NAME=evaluator
 DB_HOST=localhost
 DB_PORT=5432
@@ -1384,13 +1078,11 @@ JUDGE0_API_KEY=
 ### 4. Set Up PostgreSQL (Optional)
 
 ```bash
-# Create the database (required for persistent results and student tracking)
 createdb evaluator
-
 # The schema is auto-created on first startup — no manual migration needed
 ```
 
-> **Without PostgreSQL**: The system still works! Results are stored in session, and the review queue uses an in-memory fallback. You just lose persistence across server restarts.
+> **Without PostgreSQL**: The system still works! Results are stored in session, and the review queue uses an in-memory fallback.
 
 ### 5. Start the Backend
 
@@ -1400,58 +1092,89 @@ python run_backend.py
 # API docs at http://localhost:8000/docs
 ```
 
-### 6. (Optional) Set Up Ollama for Offline AI
-
-```bash
-# Install Ollama
-brew install ollama
-
-# Start Ollama server with Metal GPU acceleration
-OLLAMA_FLASH_ATTENTION=1 ollama serve
-
-# Pull Phi-3 Mini model (2.2GB, one-time download)
-ollama pull phi3:mini
-
-# Or auto-start at login:
-brew services start ollama
-```
-
-> **This is optional**: The system works fine with just the Gemini API. Ollama is only needed if you want offline capability or hit rate limits.
-
-### 7. Set Up and Start the Frontend
+### 6. Set Up and Start the Frontend
 
 ```bash
 cd frontend
 npm install
-npx next dev
+npm run dev
 # Frontend starts at http://localhost:3000
 ```
 
-### 8. (Optional) Start Self-Hosted Judge0
+### 7. (Optional) Start Self-Hosted Judge0
 
 ```bash
-# Open Docker Desktop first, then:
 docker-compose -f docker-compose.judge0.yml up -d
 # Judge0 API available at http://localhost:2358
 ```
 
-### 9. Use the Application
+### 8. Use the Application
 
 **As a Teacher:**
-1. Open `http://localhost:3000` and click **Try Now**
-2. Log in with username `teacher`, password `teacher`
-3. Navigate to **Upload** to submit student files
-4. Enter the problem statement and (optionally) paste test cases JSON
-5. Click **Evaluate** and view results on the **Results** page
+1. Open `http://localhost:3000` → click **Try Now**
+2. Log in with `teacher` / `teacher`
+3. Navigate to **Upload** → select assignment type → upload files
+4. Enter the problem statement and optionally paste test cases
+5. Click **Evaluate** → view results on the **Results** page
 6. Check flagged submissions in the **Review Queue**
 
 **As a Student:**
-1. Open `http://localhost:3000/login`
-2. Select **Student** role and log in (username = your student ID, password = same as username)
+1. Open `http://localhost:3000/login` → select **Student** role
+2. Log in (username = your student ID, password = same)
 3. View your **Dashboard** with GPA, percentile, and achievements
 4. Check **My Submissions** for detailed AI feedback
-5. Track your **Progress** over time
-6. See where you rank on the **Leaderboard**
+5. Track **Progress** over time
+6. Chat with the **AI Study Coach** for personalized help
+
+---
+
+## 🚀 Deployment (Render + Vercel)
+
+### Architecture
+
+```
+┌─────────────────┐         ┌──────────────────┐
+│   Vercel         │  HTTPS  │   Render          │
+│   (Frontend)     │ ──────→ │   (Backend)       │
+│   Next.js 14     │         │   FastAPI/Uvicorn  │
+│                  │         │                    │
+│ NEXT_PUBLIC_     │         │ GROQ_API_KEY       │
+│ API_URL          │         │ OPENROUTER_API_KEY │
+└─────────────────┘         │ FRONTEND_URL       │
+                             │ DB_HOST (Neon)     │
+                             └────────┬───────────┘
+                                      │ SSL
+                                      ▼
+                             ┌──────────────────┐
+                             │  Neon PostgreSQL  │
+                             │  (Cloud DB)       │
+                             └──────────────────┘
+```
+
+### Render (Backend)
+
+Environment variables:
+```
+GROQ_API_KEY, OPENROUTER_API_KEY, LLM_ENABLED=true
+DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_SSLMODE=require
+FRONTEND_URL=https://your-app.vercel.app
+```
+
+Use `requirements-deploy.txt` (excludes torch/transformers to stay under 512MB RAM limit).
+
+### Vercel (Frontend)
+
+Environment variable:
+```
+NEXT_PUBLIC_API_URL=https://your-app.onrender.com
+```
+
+### Key deployment decisions:
+- `run_backend.py` reads `$PORT` from environment (Render assigns dynamically)
+- CORS configured via `FRONTEND_URL` env var
+- Database uses `sslmode=require` for Neon PostgreSQL
+- All frontend API URLs centralized in `lib/api.ts` — zero hardcoded localhost
+- Heavy ML libs (torch, transformers) excluded from deploy requirements — only LLM APIs used in cloud
 
 ---
 
@@ -1459,21 +1182,21 @@ docker-compose -f docker-compose.judge0.yml up -d
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `LLM_ENABLED` | No | `false` | Enable LLM for relevance checks and feedback |
-| `GEMINI_API_KEY` | If LLM enabled | — | Google Gemini API key |
-| `GEMINI_MODEL` | No | `gemini-2.0-flash` | Gemini model to use |
-| `USE_LOCAL_SLM` | No | `true` | Enable local Phi-3 fallback when Gemini fails |
-| `LOCAL_MODEL_PATH` | No | `(auto-detected)` | Path to Phi-3 GGUF model file |
-| `OLLAMA_URL` | No | `http://127.0.0.1:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | No | `phi3:mini` | Ollama model name |
+| `LLM_ENABLED` | No | `false` | Enable LLM for feedback and concept refinement |
+| `GROQ_API_KEY` | If LLM enabled | — | Groq API key for LLaMA 3.1 |
+| `OPENROUTER_API_KEY` | If LLM enabled | — | OpenRouter API key for Nemotron |
 | `DB_NAME` | No | `evaluator` | PostgreSQL database name |
 | `DB_HOST` | No | `localhost` | PostgreSQL host |
 | `DB_PORT` | No | `5432` | PostgreSQL port |
 | `DB_USER` | No | `postgres` | PostgreSQL username |
 | `DB_PASSWORD` | No | `postgres` | PostgreSQL password |
+| `DB_SSLMODE` | No | — | Set to `require` for Neon cloud DB |
 | `JUDGE0_API_URL` | No | `http://localhost:2358` | Judge0 API URL |
 | `JUDGE0_API_KEY` | No | — | Judge0 API key (for RapidAPI hosted) |
-| `JWT_SECRET` | No | `evaluator-secret-key-change-in-production` | Secret key for JWT token signing |
+| `JWT_SECRET` | No | `evaluator-secret-key-change-in-production` | Secret for JWT signing |
+| `FRONTEND_URL` | For deployment | — | Frontend URL for CORS (e.g., `https://app.vercel.app`) |
+| `PORT` | For deployment | `8000` | Port for backend (Render sets this dynamically) |
+| `NEXT_PUBLIC_API_URL` | For deployment | `http://localhost:8000` | Backend URL for frontend API calls |
 
 ---
 
@@ -1486,25 +1209,33 @@ docker-compose -f docker-compose.judge0.yml up -d
 | **Pydantic v2** | Request/response validation and serialization |
 | **Uvicorn** | ASGI server for running FastAPI |
 | **Tree-sitter** | Production-grade incremental parser for AST analysis |
-| **Google Gemini** | LLM for relevance checking and semantic feedback (cloud) |
-| **Ollama** | Optimized local LLM runtime with Metal GPU acceleration |
-| **Phi-3 Mini** | Microsoft's 3.8B parameter SLM for offline AI feedback |
-| **llama-cpp-python** | Direct GGUF model loading for offline inference (fallback) |
-| **Sentence-Transformers** | Neural text embeddings for semantic similarity |
+| **Groq (LLaMA 3.1 8B)** | Fast LLM for feedback generation and concept refinement |
+| **OpenRouter (Nemotron)** | Free reasoning model for code relevance checks |
+| **Sentence-Transformers** | Neural text embeddings (all-MiniLM-L6-v2) for semantic similarity |
 | **GPT-2** | Perplexity-based AI-generation detection |
 | **PostgreSQL** | Persistent storage for results, reviews, and student data |
+| **Neon** | Serverless PostgreSQL for cloud deployment |
 | **psycopg2** | PostgreSQL adapter for Python |
 | **NumPy** | Numerical operations for embeddings and percentiles |
 | **PyJWT** | JSON Web Token authentication |
 | **Judge0 CE** | Sandboxed code execution engine |
+| **httpx** | Async HTTP client for LLM API calls |
+| **nest_asyncio** | Nested event loop support for production stability |
 
 ### Frontend
 | Technology | Purpose |
 |---|---|
-| **Next.js 14** | React framework with file-based routing |
+| **Next.js 14** | React framework with App Router and file-based routing |
 | **TypeScript** | Type-safe frontend development |
-| **TailwindCSS 3** | Utility-first CSS framework |
+| **TailwindCSS 3** | Utility-first CSS framework with custom Obsidian theme |
 | **React 18** | UI component library |
+
+### Deployment
+| Technology | Purpose |
+|---|---|
+| **Render** | Backend hosting (FastAPI + Uvicorn) |
+| **Vercel** | Frontend hosting (Next.js) |
+| **Neon** | Serverless PostgreSQL (free tier) |
 
 ---
 
@@ -1512,79 +1243,43 @@ docker-compose -f docker-compose.judge0.yml up -d
 
 ### Q: How does the system differentiate between two similar code submissions?
 
-**A:** Through the **complexity_score** computed by tree-sitter. Even if two submissions implement similar algorithms, they'll have different:
-- Nesting depths (how deeply nested are the loops/conditions)
-- Unique identifier counts (how many distinct variable names)
-- Function names (e.g., `threeSum` vs `threeSumClosest`)
-- Control flow count (number of loops, conditions, try-except blocks)
+**A:** Through the **complexity_score** computed by tree-sitter. Even if two submissions implement similar algorithms, they'll have different nesting depths, unique identifier counts, function names, and control flow counts. These produce different complexity scores, leading to different final scores.
 
-These metrics produce different complexity scores, which lead to different final scores.
+### Q: What happens when the LLM API is rate-limited?
 
-### Q: What happens when the Gemini API is rate-limited?
+**A:** The system has built-in rate limiters (25 req/min for Groq, 20 req/min for OpenRouter) that space requests to avoid 429 errors. If a 429 still occurs, it waits 15 seconds and retries once. If that also fails, it falls back to deterministic rule-based scoring. `check_relevance()` returns `UNCERTAIN` on failure (not `IRRELEVANT` — students are never penalized).
 
-**A:** The system **gracefully degrades** with a three-tier fallback:
-1. First tries alternate Gemini models (gemini-2.0-flash, gemini-flash-latest, etc.)
-2. When all Gemini models fail, automatically falls back to **Ollama Phi-3** running locally on your M1/M2/M3 GPU (~1.7s relevance, ~20s feedback)
-3. If Ollama isn't running, falls back to **llama-cpp-python** loading the GGUF model directly (~7s relevance, ~72s feedback)
-4. If no local model is available, uses **rule-based analysis** (AST, keywords, structure)
-5. `check_relevance()` returns `UNCERTAIN` on failure (not `IRRELEVANT` — students are never penalized)
+### Q: What makes the transcript evaluation unique?
 
-You can run evaluations entirely offline with zero API cost.
-
-### Q: What is single-file mixed evaluation?
-
-**A:** Traditionally, mixed assignments require students to submit two files — one with code and one with explanation. With single-file mixed evaluation, students can submit **one file** containing both code and explanation. The system automatically splits it:
-- **Python files**: Docstrings and comments become "content"; the full file becomes "code"
-- **Text/Markdown files**: Fenced code blocks (` ``` `) become "code"; everything else becomes "content"
-- **PDF files**: Same logic as text files, applied to extracted text
-
-Both agents run their respective evaluations seamlessly, producing a combined score.
-
-### Q: How do I set up offline AI evaluation?
-
-**A:** Three steps:
-```bash
-brew install ollama          # Install Ollama
-ollama serve                 # Start the server (keep running)
-ollama pull phi3:mini        # Download Phi-3 Mini (2.2GB, once)
-```
-The system auto-detects Ollama and uses it whenever Gemini is unavailable. Set `USE_LOCAL_SLM=true` in `.env` (enabled by default).
+**A:** The two-phase concept extraction. TF-IDF alone picks garbage terms like "data set" and "precision". By sending 20 TF-IDF candidates through Groq for filtering, only genuinely teachable concepts survive. The LLM can only select from candidates, never hallucinate new ones — this gives accuracy with reliability.
 
 ### Q: Do I need Judge0 for the system to work?
 
-**A:** No. Judge0 is **optional**. Without it:
-- **Python** test cases still run locally via subprocess
-- **C++** test cases run locally via `g++ -std=c++17` compilation and execution
-- LeetCode-style `class Solution` submissions are automatically wrapped with headers and a `main()` function
-- Only Java/JavaScript test cases would be skipped (static analysis only)
-- The system still provides accurate scores based on AST analysis, LLM feedback, and structural metrics
+**A:** No. Judge0 is **optional**. Without it, Python runs locally via subprocess and C++ compiles locally with `g++ -std=c++17`. Only other languages (Java/JS) would skip test execution.
 
 ### Q: What file types are supported?
 
-**A:** 
-- **Code**: `.py` (Python), `.cpp` (C++) for full AST analysis; any text file for basic analysis
-- **Content**: `.txt`, `.md`, `.pdf`, or any text file
-- **Mixed (single-file)**: `.py`, `.cpp`, `.txt`, `.md`, `.pdf` — the system auto-splits code and explanation from a single file
+**A:**
+- **Code**: `.py` (Python), `.cpp` / `.cc` / `.h` (C++) for full AST analysis
+- **Content**: `.txt`, `.md`, `.pdf`, `.html` or any text file
+- **Transcript**: `.vtt` (WebVTT subtitle format)
+- **Student summaries**: `.html`, `.txt`, `.pdf`
 
 ### Q: Can I use this without PostgreSQL?
 
-**A:** Yes! Without PostgreSQL:
-- Evaluation results are stored in browser sessionStorage
-- The review queue uses an in-memory Python dictionary
-- Student tracking and percentiles won't persist across restarts
-- All scoring and feedback features work normally
+**A:** Yes. Without PostgreSQL, evaluation results are stored in browser sessionStorage, and the review queue uses an in-memory fallback. All scoring features work normally — you just lose persistence across restarts.
 
 ### Q: How accurate is the AI-generation detection?
 
-**A:** The GPT-2 perplexity method is a **heuristic signal**, not a definitive detector. It works as a supporting flag that routes submissions for human review. The teacher makes the final decision. Low perplexity doesn't guarantee AI generation — some well-structured human writing can also have low perplexity.
+**A:** GPT-2 perplexity is a **heuristic signal**, not a definitive detector. It routes submissions for human review — the teacher makes the final decision. On servers without PyTorch, this check is gracefully skipped.
 
-### Q: What is the Rubric and do I need to provide one?
+### Q: What is the default rubric?
 
-**A:** A rubric defines evaluation weights and criteria. If you don't provide one, the **default rubric** is used:
-- Code: approach (40%), readability (20%), structure (20%), effort (20%)
-- Content: coverage (60%), alignment (25%), flow (8%), completeness (7%)
-
-You can customize weights by uploading a custom rubric JSON.
+**A:** If you don't provide a custom rubric, the defaults are:
+- **Code**: approach (40%), readability (20%), structure (20%), effort (20%)
+- **Content**: factual accuracy (40%), coverage (30%), alignment (15%), flow (8%), completeness (7%)
+- **Mixed**: code dimension (60%) + content dimension (40%)
+- **Transcript**: concept coverage (35%), attempt bonus (30%), depth (15%), expression (10%), base (10%)
 
 ---
 
@@ -1606,8 +1301,8 @@ You can customize weights by uploading a custom rubric JSON.
 3. Tree-sitter. (2024). Tree-sitter documentation. https://tree-sitter.github.io/tree-sitter/
 4. Judge0. (2024). Judge0 CE — open-source online code execution system. https://judge0.com/
 5. Radford, A., et al. (2019). Language models are unsupervised multitask learners. *OpenAI Technical Report*.
-6. Google DeepMind. (2024). Gemini: A family of highly capable multimodal models. *arXiv preprint*.
-7. Wang, W., et al. (2020). MiniLM: Deep self-attention distillation for task-agnostic compression. *NeurIPS 2020*.
+6. Wang, W., et al. (2020). MiniLM: Deep self-attention distillation for task-agnostic compression. *NeurIPS 2020*.
+7. Touvron, H., et al. (2023). LLaMA: Open and efficient foundation language models. *arXiv preprint*.
 
 ---
 
