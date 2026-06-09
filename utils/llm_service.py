@@ -21,6 +21,7 @@ GROQ_URL           = "https://api.groq.com/openai/v1/chat/completions"
 OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
 
 GROQ_MODEL         = "llama-3.1-8b-instant"
+GROQ_MODEL_70B     = "llama-3.3-70b-versatile"  # 131K context, used for concept extraction
 OPENROUTER_MODEL   = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 
 
@@ -64,7 +65,7 @@ _openrouter_limiter = _RateLimiter(calls_per_minute=20)
 # CORE API CALLER — GROQ (with rate limiting + 429 retry)
 # ─────────────────────────────────────────────────────────────
 
-async def _call_groq(messages: list, max_tokens: int = 500) -> str:
+async def _call_groq(messages: list, max_tokens: int = 500, temperature: float = 0.3) -> str:
     """Calls Groq API with rate limiting. Retries once on 429."""
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY not set in .env")
@@ -82,7 +83,7 @@ async def _call_groq(messages: list, max_tokens: int = 500) -> str:
                 "model": GROQ_MODEL,
                 "messages": messages,
                 "max_tokens": max_tokens,
-                "temperature": 0.3
+                "temperature": temperature
             },
             timeout=30
         )
@@ -102,9 +103,67 @@ async def _call_groq(messages: list, max_tokens: int = 500) -> str:
                     "model": GROQ_MODEL,
                     "messages": messages,
                     "max_tokens": max_tokens,
-                    "temperature": 0.3
+                    "temperature": temperature
                 },
                 timeout=30
+            )
+
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
+
+
+# ─────────────────────────────────────────────────────────────
+# CORE API CALLER — GROQ 70B (for concept extraction)
+# ─────────────────────────────────────────────────────────────
+
+async def _call_groq_70b(messages: list, max_tokens: int = 500, temperature: float = 0.1) -> str:
+    """
+    Calls Groq API with the 70B model (llama-3.3-70b-versatile).
+    Used for concept extraction — needs the larger model for better
+    instruction-following and semantic understanding.
+
+    Uses lower temperature (0.1) for deterministic concept extraction
+    and longer timeout (60s) for processing large transcripts.
+    """
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY not set in .env")
+
+    await _groq_limiter.wait()
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            GROQ_URL,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": GROQ_MODEL_70B,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            },
+            timeout=60  # longer timeout for large transcripts
+        )
+
+        # Handle rate limit — wait and retry once
+        if response.status_code == 429:
+            print("[Groq-70B] Rate limited — waiting 15s and retrying...")
+            await asyncio.sleep(15)
+            _groq_limiter.last_call_time = time.monotonic()
+            response = await client.post(
+                GROQ_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": GROQ_MODEL_70B,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature
+                },
+                timeout=60
             )
 
         response.raise_for_status()
@@ -230,23 +289,49 @@ async def _generate_feedback_async(
     submission: str,
     problem_statement: str,
     score: float,
-    assignment_type: str = "code"
+    assignment_type: str = "code",
+    matched_concepts: list = None,
+    missing_concepts: list = None,
+    word_count: int = 0,
+    depth_score: float = 0,
 ) -> str:
-    system_msg = """You are a warm, experienced university professor who genuinely cares about student growth. You write feedback the way top educators do — conversational, specific, and encouraging. Never use bullet points, numbered lists, or section headers like "Summary:" or "Strengths:". Instead, write naturally flowing paragraphs, as if you're sitting across from the student explaining your thoughts.
+    system_msg = """You are a university professor writing brief, personal feedback on a student's work. Your tone is warm but honest. You write in plain sentences — no bullet points, no numbered lists, no section headers, no emoji, no markdown formatting.
 
-Your feedback should feel like a personal note, not a rubric checklist. Reference specific parts of their work. Be honest but kind — students should feel motivated to improve, not discouraged."""
+CRITICAL RULES:
+- You MUST reference the specific topics this student covered and missed (provided below). Do NOT use generic phrases.
+- Every student's feedback must be different. Focus on THEIR specific gaps and strengths.
+- Never start with "I was impressed" or "Great job" — start by directly addressing what you noticed in their specific content.
+- Do NOT repeat the score. The score is already shown separately.
+- Write as if you're leaving a handwritten note on their paper."""
 
-    user_msg = f"""Here's a student's {assignment_type} submission for the assignment: "{problem_statement}"
+    # Build student-specific context
+    context_parts = []
+    if matched_concepts:
+        context_parts.append(f"Topics this student covered well: {', '.join(matched_concepts[:8])}")
+    if missing_concepts:
+        context_parts.append(f"Topics this student MISSED: {', '.join(missing_concepts[:8])}")
+    if word_count:
+        context_parts.append(f"Word count: {word_count}")
+    if depth_score:
+        context_parts.append(f"Depth of explanation: {depth_score:.0f}/100")
 
-Their automated score is {score:.1f} out of 100.
+    student_context = "\n".join(context_parts) if context_parts else "No specific concept data available."
 
---- STUDENT SUBMISSION ---
-{submission[:1000]}
+    user_msg = f"""Assignment: "{problem_statement}"
+
+STUDENT-SPECIFIC DATA:
+{student_context}
+
+--- STUDENT'S SUBMISSION ---
+{submission[:800]}
 --- END ---
 
-Write 3-4 sentences of personalized feedback. Start by noting something specific you observed in their work (good or bad). Then naturally mention what they did well and what they should focus on improving. End with an encouraging thought that makes them want to try harder next time.
+Write 3-4 sentences of feedback for THIS specific student. You must:
+1. Mention at least one specific topic they missed (from the missing list above) and briefly say WHY it matters.
+2. Acknowledge something specific from their actual writing (quote or reference a phrase they used).
+3. Give one concrete suggestion for how they can improve their next submission.
 
-Keep it under 150 words. Write in second person ("you"). Sound human — like a professor who just read their paper, not like an AI."""
+Keep it under 120 words. Write in second person ("you"). No emoji, no markdown, no formatting."""
 
     try:
         return await _call_groq(
@@ -254,7 +339,8 @@ Keep it under 150 words. Write in second person ("you"). Sound human — like a 
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg}
             ],
-            max_tokens=350
+            max_tokens=300,
+            temperature=0.5
         )
     except Exception as e:
         print(f"[Groq] Feedback generation failed: {e}")
@@ -376,6 +462,9 @@ class LLMService:
         rubric_context: str = "",
         deterministic_findings: list = None,
         missing_concepts: list = None,
+        matched_concepts: list = None,
+        word_count: int = 0,
+        depth_score: float = 0,
         **kwargs
     ) -> str:
         """Synchronous feedback generation — wraps async call.
@@ -397,13 +486,6 @@ class LLMService:
             problem_parts.append(problem_statement)
         if rubric_context:
             problem_parts.append(f"Rubric: {rubric_context[:300]}")
-        if deterministic_findings:
-            if isinstance(deterministic_findings, list):
-                problem_parts.append("Analysis findings: " + "; ".join(str(f) for f in deterministic_findings[:5]))
-            else:
-                problem_parts.append(f"Analysis: {str(deterministic_findings)[:300]}")
-        if missing_concepts:
-            problem_parts.append(f"Missing concepts: {', '.join(str(c) for c in missing_concepts[:10])}")
         
         combined_problem = "\n".join(problem_parts) if problem_parts else "General evaluation"
 
@@ -412,7 +494,14 @@ class LLMService:
             try:
                 result = loop.run_until_complete(
                     _generate_feedback_async(
-                        actual_submission, combined_problem, score, actual_type
+                        actual_submission,
+                        combined_problem,
+                        score,
+                        actual_type,
+                        matched_concepts=matched_concepts or [],
+                        missing_concepts=missing_concepts or [],
+                        word_count=word_count,
+                        depth_score=depth_score,
                     )
                 )
             finally:
@@ -425,3 +514,4 @@ class LLMService:
             print(f"[LLMService] generate_semantic_feedback error: {e}")
             fb = _rule_based_feedback(score, actual_type)
             return [fb] if isinstance(fb, str) else fb
+

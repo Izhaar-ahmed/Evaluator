@@ -86,6 +86,49 @@ TECHNICAL_PHRASES = [
     "accuracy score", "model accuracy",
 ]
 
+# Words that should NEVER be treated as educational concepts, regardless of
+# TF-IDF score. These are common English words that frequently appear in
+# lecture transcripts but have zero pedagogical value.
+NEVER_CONCEPTS = {
+    # Adjectives / adverbs that are NOT technical concepts
+    "difficult", "easy", "hard", "simple", "obvious", "obviously",
+    "clear", "clearly", "certain", "certainly", "quick", "quickly",
+    "slow", "slowly", "fast", "proper", "properly", "correct",
+    "correctly", "incorrect", "wrong", "entire", "entirely",
+    "complete", "completely", "rough", "roughly", "approximate",
+    "approximately", "exact", "exactly", "particular", "particularly",
+    "necessary", "necessarily", "sufficient", "sufficiently",
+    "significant", "significantly", "essential", "essentially",
+    "critical", "critically", "typical", "typically", "normal",
+    "normally", "usual", "usually", "similar", "similarly",
+    "different", "differently", "separate", "separately",
+    "effective", "effectively", "efficient", "efficiently",
+    "respective", "respectively", "automatic", "automatically",
+    "manual", "manually", "independent", "independently",
+    # Pronouns / reflexives
+    "itself", "themselves", "ourselves", "himself", "herself",
+    "myself", "yourself", "yourselves", "oneself",
+    # Generic nouns that are never concepts
+    "people", "person", "everyone", "somebody", "nobody",
+    "everything", "nothing", "anything", "something",
+    "stuff", "thing", "things", "way", "ways",
+    "lot", "lots", "bit", "bits", "piece", "pieces",
+    # Lecture / classroom interaction
+    "question", "questions", "answer", "answers", "doubt", "doubts",
+    "assignment", "homework", "exam", "test", "quiz",
+    "lecture", "class", "session", "semester", "course",
+    "slide", "slides", "page", "screen", "board",
+    "student", "students", "teacher", "professor", "sir", "maam",
+    # Time / sequence fillers
+    "today", "tomorrow", "yesterday", "morning", "afternoon",
+    "minute", "minutes", "hour", "hours", "week", "weeks",
+    # Discourse markers
+    "basically", "actually", "literally", "honestly",
+    "frankly", "importantly", "interestingly", "unfortunately",
+    "fortunately", "hopefully", "ideally", "ultimately",
+    "eventually", "apparently", "presumably", "supposedly",
+}
+
 
 # ---------------------------------------------------------------------------
 # VTT Parsing
@@ -154,97 +197,161 @@ def _is_noise(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# LLM-Powered Concept Refinement (Groq)
+# LLM-First Concept Extraction (Groq 70B)
 # ---------------------------------------------------------------------------
 
-def llm_refine_concepts(
-    candidates: List[str],
-    transcript_snippet: str,
-    fallback_count: int = 10,
+def llm_extract_concepts(
+    clean_transcript: str,
+    tfidf_fallback_concepts: List[str] = None,
 ) -> List[str]:
     """
-    Use Groq LLM to filter TF-IDF candidates to only genuinely
-    teachable lecture concepts. Returns a dynamic-length list.
+    Extract key educational concepts directly from the transcript using
+    the LLM (Groq llama-3.3-70b-versatile). This is the PRIMARY concept
+    extraction method — the LLM reads the full transcript and identifies
+    genuinely teachable concepts.
+
+    TF-IDF concepts are used ONLY as:
+    1. A validation layer to guard against LLM hallucination
+    2. A fallback if the LLM is unavailable
+
+    The 70B model has a 131K token context window, so even a 20,000-word
+    transcript (~25-30K tokens) fits comfortably.
 
     Args:
-        candidates: TF-IDF candidate terms (typically 20).
-        transcript_snippet: First ~1500 chars of transcript for context.
-        fallback_count: Number of candidates to return if LLM fails.
+        clean_transcript: Full cleaned lecture transcript text.
+        tfidf_fallback_concepts: Pre-extracted TF-IDF concepts for fallback.
 
     Returns:
-        Filtered list of real concepts (typically 5-15).
+        List of 5-12 key educational concepts.
     """
     import os
     import json
 
+    fallback = tfidf_fallback_concepts or []
+
     if not os.getenv("GROQ_API_KEY") or not os.getenv("LLM_ENABLED", "false").lower() == "true":
-        print("  ⚠ LLM not available for concept refinement — using TF-IDF top candidates")
-        return candidates[:fallback_count]
+        print("  ⚠ LLM not available — falling back to TF-IDF concepts")
+        return _apply_never_concepts_filter(fallback)[:10]
 
-    if not candidates:
-        return []
+    if not clean_transcript or len(clean_transcript.strip()) < 100:
+        print("  ⚠ Transcript too short for LLM extraction")
+        return _apply_never_concepts_filter(fallback)[:10]
 
-    prompt = f"""You are an academic concept extractor analyzing a lecture transcript.
+    # Build the prompt — send the FULL transcript
+    # 20,000 words ≈ 25-30K tokens, well within 131K context window
+    prompt = f"""You are an expert educator analyzing a lecture transcript. Your job is to identify the KEY EDUCATIONAL CONCEPTS that were taught in this lecture.
 
-Given these candidate terms extracted from a lecture, return ONLY the ones that are genuine, 
-teachable technical/academic concepts that a student should demonstrate understanding of.
+A "key concept" is a specific technical term, method, algorithm, principle, or framework that:
+- A textbook would dedicate a section or paragraph to
+- A student should be able to define and explain after attending this lecture
+- Is specific to the SUBJECT being taught (not generic English)
 
-REMOVE:
-- Generic words that appear in any lecture (e.g., "data set", "classified", "precision", "value") 
-  UNLESS they are a CORE TOPIC of THIS specific lecture
-- Vague terms that aren't real concepts (e.g., "multiple", "threshold", "conventional")
-- Near-duplicates — keep only the more specific one
+RULES:
+1. Return between 5 and 12 concepts (fewer for short/focused lectures, more for broad ones)
+2. Prefer multi-word technical phrases (e.g., "supervised learning") over single generic words
+3. NEVER include:
+   - Generic English words (difficult, obvious, itself, important, etc.)
+   - Adjectives, adverbs, or pronouns
+   - Classroom/lecture words (assignment, question, slide, etc.)
+   - Vague terms (approach, method, process) UNLESS they are the actual topic
+4. DO include:
+   - Named algorithms or techniques (e.g., "random forest", "gradient descent")
+   - Domain-specific terminology (e.g., "feature extraction", "overfitting")
+   - Key principles or frameworks (e.g., "bias-variance tradeoff")
+   - Important tools or libraries discussed (e.g., "scikit-learn", "StandardScaler")
+5. Each concept must actually appear in or be discussed in the transcript
+6. Remove near-duplicates — keep only the more specific version
 
-KEEP:
-- Actual algorithms, techniques, methods (e.g., "supervised learning", "random forest")
-- Domain-specific terminology (e.g., "feature extraction", "cross validation")
-- Key principles or frameworks being taught
+Return ONLY a valid JSON array of strings. No explanation, no markdown, no commentary.
 
-Return ONLY a valid JSON array of strings. No explanation, no markdown.
-Return as many or as few as are genuinely important (typically 5-12 for a 30-60 minute lecture).
+Example output: ["supervised learning", "decision tree", "cross validation", "overfitting", "confusion matrix"]
 
-Candidate terms: {json.dumps(candidates)}
-
-Transcript snippet (for context):
-{transcript_snippet[:1500]}"""
+LECTURE TRANSCRIPT:
+{clean_transcript}"""
 
     try:
         import asyncio
-        from utils.llm_service import _call_groq
+        from utils.llm_service import _call_groq_70b
 
         loop = asyncio.new_event_loop()
         messages = [{"role": "user", "content": prompt}]
-        raw_response = loop.run_until_complete(_call_groq(messages, max_tokens=300))
+        raw_response = loop.run_until_complete(_call_groq_70b(messages, max_tokens=500))
         loop.close()
 
         # Parse JSON array from response
-        # Handle potential markdown wrapping
         cleaned = raw_response.strip()
         if cleaned.startswith("```"):
             cleaned = cleaned.split("\n", 1)[-1]
             cleaned = cleaned.rsplit("```", 1)[0]
         cleaned = cleaned.strip()
 
-        refined = json.loads(cleaned)
+        concepts = json.loads(cleaned)
 
-        if isinstance(refined, list) and len(refined) >= 3:
-            # Only keep terms that were in the original candidates (prevent hallucination)
-            candidates_lower = {c.lower() for c in candidates}
-            validated = [c for c in refined if c.lower() in candidates_lower]
+        if not isinstance(concepts, list) or len(concepts) < 3:
+            print(f"  ⚠ LLM returned invalid format or too few concepts, falling back to TF-IDF")
+            return _apply_never_concepts_filter(fallback)[:10]
 
-            if len(validated) >= 3:
-                print(f"  ✓ LLM refined {len(candidates)} candidates → {len(validated)} real concepts: {validated}")
-                return validated
+        # Validate: each concept must actually appear in the transcript
+        # (guards against LLM hallucination)
+        transcript_lower = clean_transcript.lower()
+        validated = []
+        for concept in concepts:
+            if not isinstance(concept, str) or len(concept.strip()) < 2:
+                continue
+            concept = concept.strip()
+            concept_lower = concept.lower()
+
+            # Check if concept or its words appear in transcript
+            if concept_lower in transcript_lower:
+                validated.append(concept)
             else:
-                print(f"  ⚠ LLM returned too few valid concepts ({len(validated)}), using TF-IDF top {fallback_count}")
-                return candidates[:fallback_count]
+                # For multi-word concepts, check if most words appear
+                words = concept_lower.split()
+                if len(words) > 1:
+                    found = sum(1 for w in words if w in transcript_lower)
+                    if found >= len(words) * 0.6:
+                        validated.append(concept)
+                else:
+                    # Single word — check common variations
+                    variations = [concept_lower, concept_lower + "s", concept_lower + "ing"]
+                    if concept_lower.endswith("s"):
+                        variations.append(concept_lower[:-1])
+                    if any(v in transcript_lower for v in variations):
+                        validated.append(concept)
+
+        # Final safety: remove any NEVER_CONCEPTS that somehow slipped through
+        validated = _apply_never_concepts_filter(validated)
+
+        if len(validated) >= 3:
+            print(f"  ✓ LLM extracted {len(validated)} concepts (method=llm-70b): {validated}")
+            return validated
         else:
-            print(f"  ⚠ LLM returned invalid format, using TF-IDF top {fallback_count}")
-            return candidates[:fallback_count]
+            print(f"  ⚠ Only {len(validated)} concepts validated against transcript, falling back to TF-IDF")
+            return _apply_never_concepts_filter(fallback)[:10]
 
     except Exception as e:
-        print(f"  ⚠ LLM concept refinement failed ({e}), using TF-IDF top {fallback_count}")
-        return candidates[:fallback_count]
+        print(f"  ⚠ LLM concept extraction failed ({e}), falling back to TF-IDF")
+        return _apply_never_concepts_filter(fallback)[:10]
+
+
+def _apply_never_concepts_filter(concepts: List[str]) -> List[str]:
+    """Remove any concepts that are in the NEVER_CONCEPTS blocklist."""
+    return [
+        c for c in concepts
+        if c.lower().strip() not in NEVER_CONCEPTS
+        and not all(w.lower() in NEVER_CONCEPTS for w in c.split())
+    ]
+
+
+# Backward-compatible alias (deprecated)
+def llm_refine_concepts(
+    candidates: List[str],
+    transcript_snippet: str,
+    fallback_count: int = 10,
+) -> List[str]:
+    """DEPRECATED: Use llm_extract_concepts() instead."""
+    print("  ⚠ llm_refine_concepts is deprecated — use llm_extract_concepts()")
+    return _apply_never_concepts_filter(candidates[:fallback_count])
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +471,8 @@ def extract_concepts(clean_text: str, top_n: int = 20) -> List[str]:
         "amount", "quantity", "condition", "conditions",
         "conventional",
     }
+    # Merge the NEVER_CONCEPTS blocklist into fillers
+    fillers = fillers | NEVER_CONCEPTS
     for f in fillers:
         word_counts.pop(f, None)
 

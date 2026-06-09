@@ -25,7 +25,7 @@ from ..utils.vtt_parser import (
     parse_vtt,
     extract_concepts,
     extract_concept_dict,
-    llm_refine_concepts,
+    llm_extract_concepts,
     score_summary_against_concepts,
     strip_html,
 )
@@ -378,11 +378,13 @@ class Orchestrator:
                 }
             return results
 
-        # Phase 1b: Extract candidate concepts (oversample 20)
-        candidates = extract_concepts(clean_transcript, top_n=20)
+        # Phase 1b: Extract TF-IDF candidates as fallback
+        tfidf_candidates = extract_concepts(clean_transcript, top_n=20)
 
-        # Phase 1c: LLM refines to only genuinely teachable concepts (dynamic count)
-        concepts = llm_refine_concepts(candidates, clean_transcript)
+        # Phase 1c: LLM-FIRST concept extraction (uses 70B model)
+        # The LLM reads the full transcript and extracts concepts directly.
+        # TF-IDF candidates are only used as fallback if LLM is unavailable.
+        concepts = llm_extract_concepts(clean_transcript, tfidf_fallback_concepts=tfidf_candidates)
 
         transcript_word_count = len(clean_transcript.split())
         print(f"✓ Parsed transcript: {transcript_word_count} words")
@@ -424,6 +426,14 @@ class Orchestrator:
             feedback = []
             score_10 = round(score / 10, 1)
 
+            # ── Score Breakdown (transparent — student sees exactly where marks went) ──
+            # Formula: coverage*0.35 + depth*0.15 + expression*0.10 + attempt*0.30 + 10 base
+            coverage_pts = round(coverage * 0.35, 1)
+            depth_pts = round(depth * 0.15, 1)
+            expression_pts = round(expression * 0.10, 1)
+            attempt_pts = round(scoring.get("attempt_score", 100) * 0.30, 1)
+            base_pts = 10.0
+
             # ── Overall Assessment ──
             if score_10 >= 8.5:
                 feedback.append(f"🏆 **Excellent Work** — Score: {score_10}/10")
@@ -441,12 +451,24 @@ class Orchestrator:
                 feedback.append(f"❌ **Insufficient** — Score: {score_10}/10")
                 feedback.append("This submission does not adequately reflect the lecture content. Please rewrite with more detail.")
 
+            # ── Score Breakdown ──
+            feedback.append(
+                f"**📊 Score Breakdown**: "
+                f"Topic Coverage: {coverage_pts}/35 | "
+                f"Depth of Understanding: {depth_pts}/15 | "
+                f"Writing Quality: {expression_pts}/10 | "
+                f"Effort: {attempt_pts}/30 | "
+                f"Base: {base_pts}/10"
+            )
+
             # ── Strengths ──
             strengths = []
-            if len(matched) >= len(concepts) * 0.6:
+            if len(matched) >= len(concepts) * 0.8:
+                strengths.append(f"covered {len(matched)} out of {len(concepts)} key topics — excellent coverage")
+            elif len(matched) >= len(concepts) * 0.6:
                 strengths.append(f"covered {len(matched)} out of {len(concepts)} key topics")
             if depth >= 70:
-                strengths.append("explained concepts clearly, not just listed them")
+                strengths.append("explained concepts in depth, not just listed them")
             if 80 <= word_count <= 150:
                 strengths.append("well-structured and appropriately detailed")
             if expression >= 70:
@@ -457,26 +479,82 @@ class Orchestrator:
 
             # ── Topics Covered ──
             if matched:
-                feedback.append(f"**📋 Topics Covered** ({len(matched)}/{len(concepts)}): {', '.join(matched[:10])}")
+                feedback.append(f"**📋 Topics Covered** ({len(matched)}/{len(concepts)}): {', '.join(matched[:12])}")
 
-            # ── Areas to Improve ──
+            # ── How to Improve (highly specific per student) ──
             improvements = []
+
+            # 1) Missing topics — only if there are any
             if missing:
                 top_missing = missing[:5]
                 improvements.append(f"Include these missing topics: **{', '.join(top_missing)}**")
 
-            if depth < 50:
-                improvements.append("Don't just list topics — explain *what* each concept means and *why* it matters")
+            # 2) Depth-specific feedback — different tiers, never the same generic line
+            if depth < 40:
+                improvements.append(
+                    f"Your depth score is low ({round(depth)}/100). You seem to be listing topics without explaining them. "
+                    f"For each concept, add 1-2 sentences explaining *what* it is and *why* it's important."
+                )
+            elif depth < 55:
+                improvements.append(
+                    f"Your depth score ({round(depth)}/100) suggests you're mentioning concepts but not connecting them. "
+                    f"Try explaining relationships — e.g., *why* do we standardize data before training? *What happens* if we skip it?"
+                )
             elif depth < 70:
-                improvements.append("Try connecting concepts together (e.g., \"We used StandardScaler *before* training because...\")")
+                # Only show this if it's actually costing them points AND they have good coverage
+                if len(matched) >= len(concepts) * 0.5:
+                    improvements.append(
+                        f"Your depth score ({round(depth)}/100) is decent but could be stronger. "
+                        f"Try using cause-and-effect phrases like 'because', 'which helps', 'in order to' to show deeper understanding."
+                    )
+            # depth >= 70 → no improvement needed, don't add anything
 
-            if word_count < 50:
-                improvements.append(f"Your summary is too short ({word_count} words). Aim for 80-120 words with meaningful content")
+            # 3) Word count — specific advice
+            if word_count < 30:
+                improvements.append(
+                    f"Your summary is very short ({word_count} words). A good summary should be 80-120 words "
+                    f"and cover the main concepts taught in the lecture."
+                )
+            elif word_count < 50:
+                improvements.append(
+                    f"Your summary is too brief ({word_count} words). Aim for 80-120 words — "
+                    f"enough to mention and briefly explain each key concept."
+                )
             elif word_count > 200:
-                improvements.append(f"Your summary is too long ({word_count} words). Focus on the most important concepts in 100-120 words")
+                improvements.append(
+                    f"Your summary is quite long ({word_count} words). Focus on the {len(concepts)} most important concepts "
+                    f"and keep it to 100-120 words for clarity."
+                )
 
-            if expression < 50:
-                improvements.append("Use complete sentences with proper punctuation for better readability")
+            # 4) Expression quality
+            if expression < 40:
+                improvements.append(
+                    "Use complete sentences with proper capitalization and punctuation. "
+                    "A well-structured summary is easier to read and shows clearer thinking."
+                )
+            elif expression < 55:
+                improvements.append(
+                    "Your writing could be more polished — use proper sentences and avoid run-on phrases."
+                )
+
+            # 5) For high-scoring students who lost a few points — explain specifically why
+            if score_10 >= 8.0 and not improvements:
+                # They scored well but not perfect — explain the gap
+                if depth < 80:
+                    improvements.append(
+                        f"You covered all the topics well! The small deduction is mainly from depth of explanation ({round(depth)}/100). "
+                        f"To get a perfect score, try explaining *why* each concept matters, not just mentioning it."
+                    )
+                elif expression < 80:
+                    improvements.append(
+                        f"Excellent topic coverage! The small deduction comes from writing quality ({round(expression)}/100). "
+                        f"Polish your sentences and vary your vocabulary for a perfect score."
+                    )
+                else:
+                    improvements.append(
+                        "Near-perfect summary! To reach 10/10, try adding one more sentence "
+                        "explaining how the concepts connect to each other."
+                    )
 
             if improvements:
                 feedback.append("**🎯 How to Improve**:")
@@ -484,7 +562,7 @@ class Orchestrator:
                     feedback.append(f"  → {imp}")
 
             # ── LLM-enhanced feedback (Groq) ──
-            # Pass rule-based analysis + student data to Groq for richer feedback
+            # Pass student-specific data to Groq for unique, differentiated feedback
             try:
                 from utils.llm_service import LLMService
                 llm = LLMService()
@@ -496,6 +574,9 @@ class Orchestrator:
                         rubric_context=f"Lecture transcript concepts: {', '.join(concepts)}",
                         deterministic_findings=feedback,
                         missing_concepts=missing,
+                        matched_concepts=matched,
+                        word_count=word_count,
+                        depth_score=depth,
                     )
                     if llm_feedback and isinstance(llm_feedback, list) and len(llm_feedback) > 0:
                         llm_text = llm_feedback[0] if len(llm_feedback) == 1 else " ".join(llm_feedback)

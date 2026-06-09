@@ -16,6 +16,153 @@ def _clean_student_name(raw_name: str) -> str:
     return name.strip()
 
 
+def _strip_formatting(text: str) -> str:
+    """Remove all emoji, markdown bold/headers, and bullet markers from text."""
+    # Strip markdown bold
+    text = text.replace("**", "")
+    # Strip common emojis
+    for emoji in ["🏆", "✅", "📝", "⚠️", "❌", "💪", "📋", "🎯", "🤖", "→", "✓", "ℹ", "##"]:
+        text = text.replace(emoji, "")
+    # Strip any remaining emoji (unicode ranges)
+    text = re.sub(
+        r'[\U0001F300-\U0001F9FF\U00002702-\U000027B0\U0000FE00-\U0000FE0F'
+        r'\U0000200D\U00002640\U00002642]+', '', text
+    )
+    # Collapse whitespace
+    text = " ".join(text.split()).strip()
+    return text
+
+
+def _build_human_feedback(evaluation: Dict[str, Any]) -> str:
+    """
+    Build a clean, human-readable feedback paragraph from evaluation data.
+
+    The output is a natural message about:
+    - Score breakdown (why marks were gained/lost)
+    - What topics the student missed
+    - How they can improve (specific to their weaknesses)
+    - The AI's personalized review (if available)
+
+    No emoji, no markdown, no section headers, no scores.
+    """
+    combined = evaluation.get("combined_feedback", [])
+    missing_concepts = []
+    improvements = []
+    ai_review = ""
+    score_breakdown = ""
+
+    if combined and isinstance(combined, list):
+        for line in combined:
+            if not isinstance(line, str):
+                continue
+
+            clean = _strip_formatting(line)
+            if not clean:
+                continue
+
+            # Extract AI review paragraph
+            if "AI Analysis:" in line or "AI Evaluator" in line:
+                ai_text = re.sub(
+                    r'^.*?(?:AI Analysis:|AI Evaluator)\s*', '', line, flags=re.IGNORECASE
+                )
+                ai_text = _strip_formatting(ai_text).strip()
+                if ai_text and len(ai_text) > 20:
+                    ai_review = ai_text
+                continue
+
+            # Extract score breakdown
+            if "Score Breakdown" in line:
+                score_breakdown = _strip_formatting(line).strip()
+                # Remove the "Score Breakdown:" prefix
+                score_breakdown = re.sub(r'^.*?Score Breakdown[:\s]*', '', score_breakdown).strip()
+                continue
+
+            # Extract missing topics
+            if "missing" in line.lower() and "topic" in line.lower():
+                match = re.search(r'missing\s+topics?[:\s]+(.+)', clean, re.IGNORECASE)
+                if match:
+                    topics = [t.strip() for t in match.group(1).split(",") if t.strip()]
+                    missing_concepts.extend(topics)
+                continue
+
+            # Skip covered topics line, overall assessment, strengths, header lines
+            if any(skip in line.lower() for skip in [
+                "topics covered", "excellent work", "good summary",
+                "adequate summary", "needs improvement", "insufficient",
+                "strengths", "how to improve",
+                "outstanding summary", "you've captured", "your summary covers",
+                "the summary is quite", "this submission does not"
+            ]):
+                continue
+
+            # Extract improvement suggestions (lines starting with arrow markers)
+            if line.strip().startswith("→") or line.strip().startswith("  →"):
+                imp = _strip_formatting(line.strip().lstrip("→").strip())
+                if imp and len(imp) > 10:
+                    # Skip the "Include these missing topics" line since we handle that separately
+                    if not imp.lower().startswith("include these missing"):
+                        improvements.append(imp)
+                continue
+
+    # Build the human-readable feedback paragraph
+    parts = []
+
+    # Start with score breakdown if available — shows exactly why marks were lost
+    if score_breakdown:
+        parts.append(score_breakdown)
+
+    # Add what's missing
+    if missing_concepts:
+        seen = set()
+        unique_missing = []
+        for c in missing_concepts:
+            cl = c.lower().strip()
+            if cl not in seen and len(cl) > 1:
+                seen.add(cl)
+                unique_missing.append(c.strip())
+        if unique_missing:
+            if len(unique_missing) == 1:
+                parts.append(f"You missed covering {unique_missing[0]} in your summary.")
+            else:
+                topics_str = ", ".join(unique_missing[:-1]) + " and " + unique_missing[-1]
+                parts.append(f"You missed covering {topics_str} in your summary.")
+
+    # Add improvement suggestions (these are now specific per student)
+    if improvements:
+        seen = set()
+        unique_imps = []
+        for imp in improvements:
+            il = imp.lower().strip()
+            if il not in seen:
+                seen.add(il)
+                unique_imps.append(imp)
+        for imp in unique_imps[:3]:  # Max 3 improvement tips
+            parts.append(imp)
+
+    # Add AI review last — it's the most personalized touch
+    if ai_review:
+        parts.append(ai_review)
+
+    # If nothing was extracted, build a basic fallback from scores
+    if not parts:
+        score = evaluation.get("final_score", 0)
+        coverage = evaluation.get("concept_coverage", 0)
+
+        if score >= 8:
+            parts.append("Great work! Your summary demonstrates a strong understanding of the lecture material.")
+        elif score >= 6:
+            parts.append("You've covered the main ideas well. Try adding more detail about the specific concepts discussed in the lecture.")
+        elif score >= 4:
+            parts.append("Your summary touches on some topics but misses several key concepts from the lecture. Revisit the material and try to explain each concept in your own words.")
+        else:
+            parts.append("Your summary needs significant improvement. Please re-read or re-watch the lecture and try to cover all the main topics that were discussed.")
+
+        if coverage > 0 and coverage < 60:
+            parts.append(f"Your concept coverage was {round(coverage)}%, which means there are important topics you didn't address.")
+
+    return " ".join(parts)
+
+
 def export_results_to_csv(
     results: Dict[str, Dict[str, Any]],
     output_folder: str = "./outputs",
@@ -24,11 +171,10 @@ def export_results_to_csv(
     """
     Export evaluation results to CSV file.
 
-    Format:
-    - Score out of 10
-    - No word_count, max_score, assignment_type, or file columns
-    - Includes student summary text
-    - Clean, actionable feedback
+    Columns: student_name, concept_coverage, feedback, summary_text
+
+    The feedback column contains a clean, human-readable message about
+    what's missing and how to improve — no emoji, no markdown, no scores.
 
     Args:
         results: Dictionary of student name to evaluation results
@@ -52,12 +198,15 @@ def export_results_to_csv(
     for student_name, evaluation in results.items():
         clean_name = _clean_student_name(student_name)
 
-        # Score is already /10 from backend
-        score_10 = evaluation.get("final_score", 0)
-
         concept_coverage = evaluation.get("concept_coverage", 0)
         matched = evaluation.get("matched_concepts", 0)
         total = evaluation.get("total_concepts", 0)
+
+        # Build coverage string: "57% (4/7)"
+        if total:
+            coverage_str = f"{round(concept_coverage)}% ({matched}/{total})"
+        else:
+            coverage_str = f"{round(concept_coverage)}%"
 
         # Get summary text
         summary = evaluation.get("summary_text", "")
@@ -65,13 +214,15 @@ def export_results_to_csv(
             summary = " ".join(summary.split())
 
         # Build clean feedback
-        feedback = _build_clean_feedback(evaluation)
+        feedback = _build_human_feedback(evaluation)
+
+        # Score is already /10 from backend
+        score_10 = evaluation.get("final_score", 0)
 
         row = {
             "student_name": clean_name,
             "score": score_10,
-            "concept_coverage": f"{round(concept_coverage)}%",
-            "concepts_matched": f"{matched}/{total}" if total else "N/A",
+            "concept_coverage": coverage_str,
             "feedback": feedback,
             "summary_text": summary,
         }
@@ -84,7 +235,6 @@ def export_results_to_csv(
         "student_name",
         "score",
         "concept_coverage",
-        "concepts_matched",
         "feedback",
         "summary_text",
     ]
@@ -97,65 +247,6 @@ def export_results_to_csv(
     return str(csv_file_path)
 
 
-def _build_clean_feedback(evaluation: Dict[str, Any]) -> str:
-    """
-    Build clean, actionable feedback from evaluation data.
-    Uses the actual combined_feedback (including LLM analysis) when available,
-    strips emojis/markdown for CSV-clean output.
-    """
-    combined = evaluation.get("combined_feedback", [])
-
-    if combined and isinstance(combined, list) and len(combined) > 0:
-        # Use the real feedback — strip markdown bold and emojis for CSV
-        cleaned_parts = []
-        for line in combined:
-            if not isinstance(line, str):
-                continue
-            # Strip markdown bold markers
-            clean = line.replace("**", "")
-            # Strip common emojis used in feedback
-            for emoji in ["🏆", "✅", "📝", "⚠️", "❌", "💪", "📋", "🎯", "🤖", "→"]:
-                clean = clean.replace(emoji, "")
-            # Collapse whitespace
-            clean = " ".join(clean.split()).strip()
-            if clean:
-                cleaned_parts.append(clean)
-        if cleaned_parts:
-            return " | ".join(cleaned_parts)
-
-    # Fallback: build from score/coverage if combined_feedback is empty
-    parts = []
-    score = evaluation.get("final_score", 0)
-    coverage = evaluation.get("concept_coverage", 0)
-
-    if score >= 8:
-        parts.append("Excellent summary — demonstrates strong understanding of the lecture content.")
-    elif score >= 6.5:
-        parts.append("Good summary — covers key topics well.")
-    elif score >= 5:
-        parts.append("Adequate summary — some important topics are covered but several key concepts are missing.")
-    elif score >= 3:
-        parts.append("Below average — the summary lacks coverage of most lecture topics.")
-    else:
-        parts.append("Poor submission — does not reflect the lecture content.")
-
-    if coverage >= 70:
-        parts.append(f"Strong topic coverage ({round(coverage)}%).")
-    elif coverage >= 40:
-        parts.append(f"Moderate topic coverage ({round(coverage)}%).")
-    else:
-        parts.append(f"Low topic coverage ({round(coverage)}%). Review the key lecture topics.")
-
-    return " | ".join(parts)
-
-
-def _format_feedback_for_csv(feedback_list: List[str]) -> str:
-    """Format feedback list into a single CSV-safe string."""
-    if not feedback_list:
-        return ""
-    return " | ".join(feedback_list)
-
-
 def export_results_to_detailed_csv(
     results: Dict[str, Dict[str, Any]],
     output_folder: str = "./outputs",
@@ -163,6 +254,8 @@ def export_results_to_detailed_csv(
 ) -> str:
     """
     Export evaluation results to a detailed CSV.
+
+    Same 4-column format as the main CSV but with fuller feedback.
 
     Args:
         results: Dictionary of student name to evaluation results
@@ -184,31 +277,29 @@ def export_results_to_detailed_csv(
     rows = []
     for student_name, evaluation in results.items():
         clean_name = _clean_student_name(student_name)
-        score_10 = evaluation.get("final_score", 0)
+
         concept_coverage = evaluation.get("concept_coverage", 0)
         matched = evaluation.get("matched_concepts", 0)
         total = evaluation.get("total_concepts", 0)
 
-        matched_topics = ""
-        missing_topics = ""
-        for fb in evaluation.get("combined_feedback", []):
-            if "Topics covered:" in fb:
-                matched_topics = fb.split("Topics covered:")[-1].strip()
-            if "Missing topics:" in fb:
-                missing_topics = fb.split("Missing topics:")[-1].strip()
+        if total:
+            coverage_str = f"{round(concept_coverage)}% ({matched}/{total})"
+        else:
+            coverage_str = f"{round(concept_coverage)}%"
 
         summary = evaluation.get("summary_text", "")
         if summary:
             summary = " ".join(summary.split())
 
+        feedback = _build_human_feedback(evaluation)
+
+        score_10 = evaluation.get("final_score", 0)
+
         row = {
             "student_name": clean_name,
             "score": score_10,
-            "concept_coverage": f"{round(concept_coverage)}%",
-            "concepts_matched": f"{matched}/{total}" if total else "N/A",
-            "topics_covered": matched_topics,
-            "topics_missing": missing_topics,
-            "feedback": _build_clean_feedback(evaluation),
+            "concept_coverage": coverage_str,
+            "feedback": feedback,
             "summary_text": summary,
         }
         rows.append(row)
@@ -219,9 +310,6 @@ def export_results_to_detailed_csv(
         "student_name",
         "score",
         "concept_coverage",
-        "concepts_matched",
-        "topics_covered",
-        "topics_missing",
         "feedback",
         "summary_text",
     ]
