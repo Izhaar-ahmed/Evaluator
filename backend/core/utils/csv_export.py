@@ -49,7 +49,6 @@ def _build_human_feedback(evaluation: Dict[str, Any]) -> str:
     missing_concepts = []
     improvements = []
     ai_review = ""
-    score_breakdown = ""
 
     if combined and isinstance(combined, list):
         for line in combined:
@@ -70,11 +69,8 @@ def _build_human_feedback(evaluation: Dict[str, Any]) -> str:
                     ai_review = ai_text
                 continue
 
-            # Extract score breakdown
+            # Skip score breakdown line (not needed in CSV)
             if "Score Breakdown" in line:
-                score_breakdown = _strip_formatting(line).strip()
-                # Remove the "Score Breakdown:" prefix
-                score_breakdown = re.sub(r'^.*?Score Breakdown[:\s]*', '', score_breakdown).strip()
                 continue
 
             # Extract missing topics
@@ -106,10 +102,6 @@ def _build_human_feedback(evaluation: Dict[str, Any]) -> str:
 
     # Build the human-readable feedback paragraph
     parts = []
-
-    # Start with score breakdown if available — shows exactly why marks were lost
-    if score_breakdown:
-        parts.append(score_breakdown)
 
     # Add what's missing
     if missing_concepts:

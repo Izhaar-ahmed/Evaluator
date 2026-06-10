@@ -105,18 +105,59 @@ NEVER_CONCEPTS = {
     "effective", "effectively", "efficient", "efficiently",
     "respective", "respectively", "automatic", "automatically",
     "manual", "manually", "independent", "independently",
+    "important", "relevant", "available", "possible", "impossible",
+    "complex", "complicated", "suitable", "multiple", "various",
     # Pronouns / reflexives
     "itself", "themselves", "ourselves", "himself", "herself",
     "myself", "yourself", "yourselves", "oneself",
-    # Generic nouns that are never concepts
+    # Generic nouns — these are NEVER educational concepts on their own
     "people", "person", "everyone", "somebody", "nobody",
     "everything", "nothing", "anything", "something",
     "stuff", "thing", "things", "way", "ways",
     "lot", "lots", "bit", "bits", "piece", "pieces",
+    "understanding", "statement", "approach", "concept", "concepts",
+    "method", "process", "system", "point", "idea", "ideas",
+    "example", "examples", "case", "scenario", "situation",
+    "information", "knowledge", "experience", "explanation",
+    "discussion", "introduction", "conclusion", "summary",
+    "definition", "description", "comparison", "difference",
+    # Contraction fragments & short garbage
+    "don", "doesn", "didn", "isn", "wasn", "aren", "weren",
+    "haven", "hasn", "hadn", "won", "wouldn", "shouldn", "couldn",
+    "ain", "let", "gonna", "wanna", "gotta",
+    # Generic verbs used conversationally
+    "prediction", "predict", "learn", "learning", "teach", "apply",
+    "identify", "understand", "figure", "perform", "improve",
+    # Words that are generic in ANY lecture context — never concepts alone
+    "positive", "negative", "label", "labels", "output", "input",
+    "column", "columns", "row", "rows", "number", "value", "result", "results",
+    "problem", "solution", "challenge", "step", "steps", "phase",
+    "type", "types", "kind", "form", "category",
+    "features", "feature", "data", "model", "algorithm",
+    "pattern", "patterns", "rule", "rules", "text", "word", "words",
+    "sentence", "sentences", "review", "reviews", "product", "products",
+    "environment", "variable", "variables", "parameter", "parameters",
+    "paradigm", "paradigms", "pipeline", "function", "program",
+    "vocabulary", "interaction", "context", "content", "structure",
+    "performance", "accuracy", "error", "threshold", "score",
+    "table", "matrix", "vector", "dimension", "distance",
+    "sample", "samples", "instance", "instances", "observation",
+    "training", "testing", "validation", "classification", "regression",
+    "target", "class", "cluster", "group", "set",
+    "transform", "transformed", "transformation", "conversion",
+    "generative", "popular", "conventional",
+    # Latest garbage from real evaluation runs
+    "action", "actions", "reward", "rewards", "penalty",
+    "sentiment", "rating", "ratings", "language", "machine",
+    "suppose", "perspective", "technique", "techniques",
+    "approach", "approaches", "behavior", "behaviour",
+    "agent", "response", "signal", "noise", "cost",
+    "network", "weight", "weights", "layer", "layers",
+    "metric", "metrics", "evaluate", "evaluation",
     # Lecture / classroom interaction
     "question", "questions", "answer", "answers", "doubt", "doubts",
     "assignment", "homework", "exam", "test", "quiz",
-    "lecture", "class", "session", "semester", "course",
+    "lecture", "session", "semester", "course",
     "slide", "slides", "page", "screen", "board",
     "student", "students", "teacher", "professor", "sir", "maam",
     # Time / sequence fillers
@@ -128,6 +169,48 @@ NEVER_CONCEPTS = {
     "fortunately", "hopefully", "ideally", "ultimately",
     "eventually", "apparently", "presumably", "supposedly",
 }
+
+
+def _is_quality_concept(concept: str) -> bool:
+    """
+    Check if a concept is genuinely technical/educational.
+    
+    Multi-word phrases are almost always good (e.g., "supervised learning").
+    Single words must pass strict quality checks.
+    """
+    c = concept.lower().strip()
+    words = c.split()
+    
+    # Multi-word phrases: always higher quality — just check not ALL words are blocked
+    if len(words) >= 2:
+        # At least one word must NOT be in NEVER_CONCEPTS
+        non_blocked = [w for w in words if w not in NEVER_CONCEPTS and w not in STOPWORDS]
+        return len(non_blocked) >= 1
+    
+    # Single words: must pass strict checks
+    # Too short = garbage
+    if len(c) < 5:
+        return False
+    
+    # In NEVER_CONCEPTS or STOPWORDS = garbage
+    if c in NEVER_CONCEPTS or c in STOPWORDS:
+        return False
+    
+    # Check common stems (features→feature, paradigms→paradigm)
+    stems = [c]
+    if c.endswith('s') and len(c) > 4:
+        stems.append(c[:-1])  # features → feature
+    if c.endswith('ing') and len(c) > 5:
+        stems.append(c[:-3])  # training → train
+    if c.endswith('tion') and len(c) > 6:
+        stems.append(c[:-4])  # classification → classifica (won't match, that's fine)
+    if c.endswith('ed') and len(c) > 4:
+        stems.append(c[:-2])  # transformed → transform
+    
+    if any(s in NEVER_CONCEPTS for s in stems):
+        return False
+    
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -231,43 +314,69 @@ def llm_extract_concepts(
 
     if not os.getenv("GROQ_API_KEY") or not os.getenv("LLM_ENABLED", "false").lower() == "true":
         print("  ⚠ LLM not available — falling back to TF-IDF concepts")
-        return _apply_never_concepts_filter(fallback)[:10]
+        return _apply_never_concepts_filter(fallback)[:12]
 
     if not clean_transcript or len(clean_transcript.strip()) < 100:
         print("  ⚠ Transcript too short for LLM extraction")
-        return _apply_never_concepts_filter(fallback)[:10]
+        return _apply_never_concepts_filter(fallback)[:12]
 
-    # Build the prompt — send the FULL transcript
-    # 20,000 words ≈ 25-30K tokens, well within 131K context window
-    prompt = f"""You are an expert educator analyzing a lecture transcript. Your job is to identify the KEY EDUCATIONAL CONCEPTS that were taught in this lecture.
+    # Smart truncation: Groq has HTTP payload limits that cause 413 errors
+    # on very long transcripts (>~8000 words). We truncate intelligently
+    # by keeping beginning (intro), middle (core), and end (summary).
+    MAX_WORDS = 6000
+    words = clean_transcript.split()
+    word_count = len(words)
 
-A "key concept" is a specific technical term, method, algorithm, principle, or framework that:
-- A textbook would dedicate a section or paragraph to
-- A student should be able to define and explain after attending this lecture
-- Is specific to the SUBJECT being taught (not generic English)
+    if word_count > MAX_WORDS:
+        chunk_size = MAX_WORDS // 3  # ~2000 words each
+        beginning = " ".join(words[:chunk_size])
+        mid_start = (word_count // 2) - (chunk_size // 2)
+        middle = " ".join(words[mid_start:mid_start + chunk_size])
+        ending = " ".join(words[-chunk_size:])
+        transcript_for_llm = f"{beginning}\n\n[...middle section...]\n\n{middle}\n\n[...later section...]\n\n{ending}"
+        print(f"  ℹ Transcript truncated: {word_count} → ~{MAX_WORDS} words (begin+mid+end)")
+    else:
+        transcript_for_llm = clean_transcript
+
+    prompt = f"""You are an expert educator analyzing a university lecture transcript. Your job is to identify the KEY EDUCATIONAL CONCEPTS that were TAUGHT as subject matter in this lecture.
+
+IMPORTANT CONTEXT: This is a noisy auto-generated transcript from a live classroom recording. It contains:
+- Student questions and chatter ("Good evening sir", "Can you hear me?")
+- Speaker names and timestamps artifacts
+- Filler language and repetition from the lecturer
+You MUST look past this noise and focus ONLY on the technical subject matter being taught.
+
+A "key concept" is a NAMED technical term that:
+- Has a Wikipedia article or textbook chapter dedicated to it
+- A student could look up and study independently
+- Is specific to the field being taught (CS, ML, statistics, etc.)
 
 RULES:
-1. Return between 5 and 12 concepts (fewer for short/focused lectures, more for broad ones)
-2. Prefer multi-word technical phrases (e.g., "supervised learning") over single generic words
-3. NEVER include:
-   - Generic English words (difficult, obvious, itself, important, etc.)
-   - Adjectives, adverbs, or pronouns
-   - Classroom/lecture words (assignment, question, slide, etc.)
-   - Vague terms (approach, method, process) UNLESS they are the actual topic
+1. Return between 5 and 12 concepts. Every concept MUST be a genuine technical term.
+2. STRONGLY prefer multi-word technical phrases (e.g., "supervised learning", "feature extraction")
+3. NEVER return any of these — they are NOT concepts, even if mentioned 100 times:
+   - Generic English words: understanding, statement, prediction, don, label, positive, negative, approach, method, process, system, concept, example, important, difficult
+   - Single common words that happen to be used in technical context (e.g., "features" alone — instead use "feature extraction" or "feature engineering")
+   - Words describing the STRUCTURE of the lecture (introduction, discussion, comparison, paradigm)
+   - Student names, greetings, classroom management words
+   - Common words from the lecture domain used casually: action, reward, rating, language, suppose, perspective, sentiment, environment, machine, data, model, rule, pattern, review, column, pipeline
 4. DO include:
-   - Named algorithms or techniques (e.g., "random forest", "gradient descent")
-   - Domain-specific terminology (e.g., "feature extraction", "overfitting")
-   - Key principles or frameworks (e.g., "bias-variance tradeoff")
-   - Important tools or libraries discussed (e.g., "scikit-learn", "StandardScaler")
-5. Each concept must actually appear in or be discussed in the transcript
-6. Remove near-duplicates — keep only the more specific version
+   - Named algorithms or techniques: "random forest", "gradient descent", "TF-IDF"
+   - Named paradigms when taught as subject matter: "supervised learning", "reinforcement learning"
+   - Domain-specific compound terms: "sentiment analysis", "feature extraction", "natural language processing"
+   - Named mathematical concepts: "cosine similarity", "euclidean distance", "confusion matrix"
+   - Tools/libraries: "scikit-learn", "StandardScaler", "Google Colab"
+5. Each concept must be actually TAUGHT or EXPLAINED in the lecture (not just mentioned in passing)
+6. Remove near-duplicates — keep the more specific version
+7. EVERY concept you return must be something a student could Google and find a dedicated Wikipedia article or textbook section about
 
-Return ONLY a valid JSON array of strings. No explanation, no markdown, no commentary.
+BAD examples (NEVER return these): ["prediction", "statement", "features", "label", "understanding", "don", "positive", "negative", "paradigms", "approach", "action", "reward", "sentiment", "rating", "language", "suppose", "perspective", "machine learning", "environment", "pipeline"]
+GOOD examples: ["supervised learning", "unsupervised learning", "reinforcement learning", "feature extraction", "TF-IDF", "sentiment analysis", "confusion matrix", "natural language processing", "count vectorizer", "parts of speech tagging"]
 
-Example output: ["supervised learning", "decision tree", "cross validation", "overfitting", "confusion matrix"]
+Return ONLY a valid JSON array of strings. No explanation, no markdown.
 
 LECTURE TRANSCRIPT:
-{clean_transcript}"""
+{transcript_for_llm}"""
 
     try:
         import asyncio
@@ -301,6 +410,10 @@ LECTURE TRANSCRIPT:
             concept = concept.strip()
             concept_lower = concept.lower()
 
+            # Reject single words under 5 chars — too likely to be garbage
+            if " " not in concept and len(concept) < 5:
+                continue
+
             # Check if concept or its words appear in transcript
             if concept_lower in transcript_lower:
                 validated.append(concept)
@@ -322,25 +435,31 @@ LECTURE TRANSCRIPT:
         # Final safety: remove any NEVER_CONCEPTS that somehow slipped through
         validated = _apply_never_concepts_filter(validated)
 
+        # Deduplicate (case-insensitive)
+        seen = set()
+        unique = []
+        for c in validated:
+            cl = c.lower().strip()
+            if cl not in seen:
+                seen.add(cl)
+                unique.append(c)
+        validated = unique
+
         if len(validated) >= 3:
             print(f"  ✓ LLM extracted {len(validated)} concepts (method=llm-70b): {validated}")
             return validated
         else:
             print(f"  ⚠ Only {len(validated)} concepts validated against transcript, falling back to TF-IDF")
-            return _apply_never_concepts_filter(fallback)[:10]
+            return _apply_never_concepts_filter(fallback)[:12]
 
     except Exception as e:
         print(f"  ⚠ LLM concept extraction failed ({e}), falling back to TF-IDF")
-        return _apply_never_concepts_filter(fallback)[:10]
+        return _apply_never_concepts_filter(fallback)[:12]
 
 
 def _apply_never_concepts_filter(concepts: List[str]) -> List[str]:
-    """Remove any concepts that are in the NEVER_CONCEPTS blocklist."""
-    return [
-        c for c in concepts
-        if c.lower().strip() not in NEVER_CONCEPTS
-        and not all(w.lower() in NEVER_CONCEPTS for w in c.split())
-    ]
+    """Remove garbage concepts using both blocklist AND quality check."""
+    return [c for c in concepts if _is_quality_concept(c)]
 
 
 # Backward-compatible alias (deprecated)
@@ -838,7 +957,16 @@ def _score_depth(text: str, words: List[str]) -> float:
     Students who explain "why" and "how" score higher than those
     who just list topics.
     """
-    score = 50.0  # Base score
+    # Empty or near-empty submissions get 0 depth — can't show understanding
+    # with no words
+    if len(words) == 0:
+        return 0.0
+    if len(words) < 5:
+        return 5.0
+    if len(words) < 10:
+        return 15.0
+
+    score = 50.0  # Base score for genuine submissions (10+ words)
 
     # Indicators of deeper understanding
     depth_indicators = [
@@ -887,7 +1015,12 @@ def _score_depth(text: str, words: List[str]) -> float:
 
 def _score_expression(text: str, words: List[str]) -> float:
     """Score writing quality (grammar, structure, clarity)."""
-    score = 60.0  # Base
+    if len(words) == 0:
+        return 0.0
+    if len(words) < 5:
+        return 10.0
+
+    score = 60.0  # Base for genuine submissions
 
     # Proper capitalization at start
     if text and text[0].isupper():
